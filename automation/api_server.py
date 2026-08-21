@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, jsonify, request
 
-from common.db import DB_PATH, get_connection
+from common.db import DB_PATH, ensure_schema, get_connection
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -163,6 +163,17 @@ if __name__ == "__main__":
               f"Make sure the local MySQL server is running and "
               f"pipeline/merge.py has been run at least once.")
         sys.exit(1)
+    # A reachable-but-empty database is its own failure mode: every /api/*
+    # query dies with "Table 'persons' doesn't exist". Non-destructive --
+    # only creates the schema when it genuinely isn't there yet, so an
+    # existing database with real data is left completely untouched.
+    try:
+        if ensure_schema():
+            logger.info("Empty database detected -- created schema from db/schema.sql")
+    except Exception:
+        # Not fatal: the DB is reachable, so serve anyway and let the
+        # individual request fail loudly rather than refusing to boot.
+        logger.exception("Schema bootstrap failed; continuing to start")
     # PORT is set by hosting platforms (e.g. Render) to whatever port they
     # actually route traffic to; 5001 is just the local-dev fallback.
     # debug=True enables Werkzeug's interactive debugger, which lets

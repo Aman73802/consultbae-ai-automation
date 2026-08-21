@@ -33,7 +33,12 @@ from app.page_modules import (  # noqa: E402
     voice_page,
 )
 from app.theme import APP_NAME, inject_css, render_scroll_to_top, render_sidebar_brand  # noqa: E402
-from common.db import ensure_users_table, get_connection, init_schema, seed_admin_user  # noqa: E402
+from common.db import (  # noqa: E402
+    ensure_schema,
+    ensure_users_table,
+    get_connection,
+    seed_admin_user,
+)
 
 st.set_page_config(page_title=APP_NAME, page_icon="🔷", layout="wide",
                     initial_sidebar_state="expanded")
@@ -43,11 +48,7 @@ inject_css()
 
 def ensure_db():
     conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM persons LIMIT 1")
-    except Exception:
-        init_schema(conn)
+    ensure_schema(conn)
     ensure_users_table(conn)
     seed_admin_user(conn, os.environ.get("ADMIN_USERNAME", "admin"),
                      os.environ.get("ADMIN_PASSWORD", "consultbae2026"))

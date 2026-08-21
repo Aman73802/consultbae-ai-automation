@@ -128,6 +128,32 @@ def init_schema(conn: Optional[DictConnection] = None) -> None:
         conn.close()
 
 
+def ensure_schema(conn: Optional[DictConnection] = None) -> bool:
+    """Creates the schema only if it isn't there yet, and returns whether
+    it had to. Safe to call on every process start, unlike init_schema()
+    (which unconditionally drops and recreates every table).
+
+    Both entry points that talk to a possibly-empty database call this:
+    the Streamlit app and the n8n-facing API server. Neither can assume
+    the other ran first -- on a fresh deployment whichever one gets the
+    first request has to be able to bootstrap on its own, or it just
+    fails with "Table 'persons' doesn't exist" forever.
+    """
+    own_conn = conn is None
+    if conn is None:
+        conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM persons LIMIT 1")
+        return False
+    except Exception:
+        init_schema(conn)
+        return True
+    finally:
+        if own_conn:
+            conn.close()
+
+
 # ---------------------------------------------------------------------
 # users -- deliberately NOT part of db/schema.sql's destructive rebuild
 # cycle (init_schema() above drops and recreates everything it manages).
