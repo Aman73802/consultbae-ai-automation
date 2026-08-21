@@ -120,13 +120,107 @@ RESET_TABLES = (
 
 def reset_data(conn):
     """Truncates every data table (people + their source-specific detail
-    rows, match flags, upload records, audio submissions) so the app
-    starts from a completely empty dataset. FK checks are disabled for
-    the duration, same pattern db/schema.sql itself uses, since the
-    detail tables reference persons.person_id."""
+    rows, match flags, upload records, audio submissions, plus any custom
+    destination tables created via the merge page's "Create a new table"
+    option) so the app starts from a completely empty dataset. FK checks
+    are disabled for the duration, same pattern db/schema.sql itself uses,
+    since the detail tables reference persons.person_id."""
+    ensure_person_tables_registry(conn)
     with conn.cursor() as cur:
+        cur.execute("SELECT table_name FROM custom_person_tables")
+        custom_tables = [r["table_name"] for r in cur.fetchall()]
         cur.execute("SET FOREIGN_KEY_CHECKS = 0")
-        for table in RESET_TABLES:
+        for table in RESET_TABLES + tuple(custom_tables):
             cur.execute(f"TRUNCATE TABLE {table}")
         cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+    conn.commit()
+
+
+# ---------------------------------------------------------------------
+# Custom destination tables -- lets the merge page write a batch into a
+# separate table (e.g. "q1_2026_leads") instead of always the shared
+# persons pool, for cases where the admin wants an isolated set of people
+# rather than merging into the main table. A new table mirrors persons'
+# core columns only (full_name/email/phone/city/source_systems/
+# skill_category) -- no per-source detail children or match_flags, which
+# are specific to the persons schema. custom_person_tables just remembers
+# which extra tables exist so the merge page can list them as choices.
+# ---------------------------------------------------------------------
+
+_TABLE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+_RESERVED_TABLE_NAMES = {
+    "users", "uploaded_files", "match_flags", "audio_submissions",
+    "applicant_details", "gig_worker_details", "cbnexus_contacts",
+    "custom_person_tables",
+}
+
+
+def validate_person_table_name(table_name):
+    """Raises ValueError with a user-facing message if table_name isn't
+    safe to interpolate into raw SQL (table names can't be parameterized
+    like values) or collides with a table this app already uses for
+    something else. "persons" itself is always valid -- it's the default."""
+    if table_name == "persons":
+        return
+    if not table_name or not _TABLE_NAME_RE.match(table_name):
+        raise ValueError(
+            "Table name must start with a letter and contain only "
+            "lowercase letters, numbers, and underscores (max 63 characters)."
+        )
+    if table_name in _RESERVED_TABLE_NAMES:
+        raise ValueError(f"'{table_name}' is a reserved table name -- pick another.")
+
+
+def ensure_person_tables_registry(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS custom_person_tables ("
+            "table_name VARCHAR(64) PRIMARY KEY, "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        )
+    conn.commit()
+
+
+def list_person_tables(conn):
+    """["persons"] plus every custom destination table created so far,
+    for populating the merge page's destination-table dropdown."""
+    ensure_person_tables_registry(conn)
+    with conn.cursor() as cur:
+        cur.execute("SELECT table_name FROM custom_person_tables ORDER BY table_name")
+        extra = [r["table_name"] for r in cur.fetchall()]
+    return ["persons"] + extra
+
+
+def ensure_person_table(conn, table_name):
+    """Creates table_name (mirroring persons' core columns) if it doesn't
+    already exist, and registers it in custom_person_tables. No-op for
+    "persons" itself, which always exists via db/schema.sql. Called only
+    at Confirm & Save time (not during Analyze), so the dry-run analyze
+    step never writes anything to the database."""
+    validate_person_table_name(table_name)
+    if table_name == "persons":
+        return
+    ensure_person_tables_registry(conn)
+    with conn.cursor() as cur:
+        cur.execute("SHOW TABLES LIKE %s", (table_name,))
+        if cur.fetchone() is None:
+            cur.execute(
+                f"CREATE TABLE {table_name} ("
+                "person_id INT AUTO_INCREMENT PRIMARY KEY, "
+                "full_name VARCHAR(255) NOT NULL, "
+                "email VARCHAR(255), "
+                "phone VARCHAR(20), "
+                "city VARCHAR(100), "
+                "source_systems VARCHAR(255) NOT NULL, "
+                "skill_category VARCHAR(50), "
+                "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            )
+            cur.execute(f"CREATE INDEX idx_{table_name}_email ON {table_name}(email)")
+            cur.execute(f"CREATE INDEX idx_{table_name}_phone ON {table_name}(phone)")
+        cur.execute(
+            "INSERT IGNORE INTO custom_person_tables (table_name) VALUES (%s)",
+            (table_name,),
+        )
     conn.commit()

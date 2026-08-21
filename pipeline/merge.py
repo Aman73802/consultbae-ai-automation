@@ -473,18 +473,29 @@ class PersonRegistry:
         return flags
 
 
-def load_existing_registry(conn, log_list):
-    """Reconstructs a PersonRegistry from the current persons table, so
-    new rows (e.g. from a freshly-uploaded CSV) can be matched against
-    already-existing people instead of every run starting from zero.
-    Used by run_merge(..., fresh=False) -- the incremental path the
-    Upload & Merge UI uses, which must NOT wipe out Task 2's
-    skill_category tags or Task 3's audio_submissions the way a full
-    rebuild would."""
+def load_existing_registry(conn, log_list, table="persons"):
+    """Reconstructs a PersonRegistry from the given table (persons by
+    default), so new rows (e.g. from a freshly-uploaded CSV) can be
+    matched against already-existing people instead of every run
+    starting from zero. Used by run_merge(..., fresh=False) -- the
+    incremental path the Upload & Merge UI uses, which must NOT wipe out
+    Task 2's skill_category tags or Task 3's audio_submissions the way a
+    full rebuild would.
+
+    table lets analyze_upload()/confirm_upload() match against an
+    alternate destination table (see common/db.py::ensure_person_table)
+    instead of the shared persons pool -- if that table doesn't exist yet
+    (a brand-new destination), there's simply nothing to match against
+    yet, so this returns an empty registry rather than creating it; only
+    confirm_upload() actually creates the table, keeping analyze_upload()
+    a true no-write dry run."""
     registry = PersonRegistry(log_list)
     with conn.cursor() as cur:
-        cur.execute("SELECT person_id, full_name, email, phone, city, "
-                     "source_systems FROM persons")
+        cur.execute("SHOW TABLES LIKE %s", (table,))
+        if cur.fetchone() is None:
+            return registry
+        cur.execute(f"SELECT person_id, full_name, email, phone, city, "
+                     f"source_systems FROM {table}")
         rows = cur.fetchall()
     max_id = 0
     for r in rows:
@@ -558,18 +569,19 @@ def _clean_and_concat(file_paths, log_list):
 # exactly as before.
 # ---------------------------------------------------------------------
 
-def analyze_upload(file_paths):
+def analyze_upload(file_paths, target_table="persons"):
     log_list = []
 
     def log(msg):
         log_list.append(msg)
         print(msg)
 
-    log(f"=== analyze_upload starting ({len(file_paths)} file(s)) ===")
+    log(f"=== analyze_upload starting ({len(file_paths)} file(s), "
+        f"target table={target_table!r}) ===")
     s1, s2, s3, unrecognized = _clean_and_concat(file_paths, log_list)
 
     conn = get_connection()
-    registry = load_existing_registry(conn, log_list)
+    registry = load_existing_registry(conn, log_list, table=target_table)
     conn.close()
 
     proposals = []
@@ -627,25 +639,42 @@ def analyze_upload(file_paths):
         "n_auto_match": n_auto,
         "n_needs_review": n_review,
         "n_create_new": n_new,
+        "target_table": target_table,
     }
 
 
-def confirm_upload(analysis, resolutions):
+def confirm_upload(analysis, resolutions, target_table="persons"):
     """resolutions: {row_index: person_id_or_None} for needs_review rows
     only (None means "Create as New Person"; auto_match/create_new rows
-    are applied exactly as analyzed, no entry needed). Writes persons +
-    detail tables + match_flags and returns the same kind of summary
-    dict run_merge() does."""
+    are applied exactly as analyzed, no entry needed).
+
+    target_table must match what analyze_upload() was called with --
+    matching was done against that table's existing rows, so writing
+    anywhere else would apply the admin's review decisions to person_id
+    values that mean something different there.
+
+    For target_table="persons" (the default): writes persons + the
+    per-source detail tables (applicant_details/gig_worker_details/
+    cbnexus_contacts) + match_flags, exactly as before. For any other
+    table: creates it if needed (see common/db.py::ensure_person_table)
+    and writes only the core person-shaped columns -- the detail tables
+    and match_flags are specific to the persons schema (FK'd to
+    persons.person_id), so per-source detail data and conflict flags
+    aren't persisted for a custom destination, only the merged people
+    themselves. Returns the same kind of summary dict run_merge() does."""
     log_list = []
 
     def log(msg):
         log_list.append(msg)
         print(msg)
 
-    log("=== confirm_upload starting ===")
+    log(f"=== confirm_upload starting (target table={target_table!r}) ===")
 
     conn = get_connection()
-    registry = load_existing_registry(conn, log_list)
+    if target_table != "persons":
+        from common.db import ensure_person_table
+        ensure_person_table(conn, target_table)
+    registry = load_existing_registry(conn, log_list, table=target_table)
     existing_ids = set(registry.people.keys())
 
     def _resolve(p):
@@ -712,97 +741,106 @@ def confirm_upload(analysis, resolutions):
     for pid, p in sorted(registry.people.items()):
         if pid in existing_ids:
             cur.execute(
-                "UPDATE persons SET full_name=%s, email=%s, phone=%s, "
-                "city=%s, source_systems=%s WHERE person_id=%s",
+                f"UPDATE {target_table} SET full_name=%s, email=%s, phone=%s, "
+                f"city=%s, source_systems=%s WHERE person_id=%s",
                 (p["full_name"], p["email"], p["phone"], p["city"],
                  ",".join(sorted(p["source_systems"])), pid),
             )
         else:
             cur.execute(
-                "INSERT INTO persons (person_id, full_name, email, phone, "
-                "city, source_systems) VALUES (%s, %s, %s, %s, %s, %s)",
+                f"INSERT INTO {target_table} (person_id, full_name, email, phone, "
+                f"city, source_systems) VALUES (%s, %s, %s, %s, %s, %s)",
                 (p["person_id"], p["full_name"], p["email"], p["phone"],
                  p["city"], ",".join(sorted(p["source_systems"]))),
             )
 
-    def already_covered(table):
+    total_flags = None
+    if target_table != "persons":
+        log(f"[confirm_upload] target table is {target_table!r}, not persons -- "
+            f"skipping applicant/gig/cbnexus detail tables and match_flags, "
+            f"which are specific to the persons schema. Only the core "
+            f"person-shaped fields were saved.")
+    else:
+        def already_covered(table):
+            with conn.cursor() as c:
+                c.execute(f"SELECT DISTINCT person_id FROM {table}")
+                return {row["person_id"] for row in c.fetchall()}
+
+        covered_applicant = already_covered("applicant_details")
+        covered_gig = already_covered("gig_worker_details")
+        covered_cbnexus = already_covered("cbnexus_contacts")
+        applicant_rows = [r for r in applicant_rows if r["person_id"] not in covered_applicant]
+        gig_rows = [r for r in gig_rows if r["person_id"] not in covered_gig]
+        cbnexus_rows = [r for r in cbnexus_rows if r["person_id"] not in covered_cbnexus]
+
+        if applicant_rows:
+            cur.executemany(
+                "INSERT INTO applicant_details (person_id, experience_years, ctc_raw, "
+                "ctc_annual_inr, ctc_was_lakhs, applied_date_raw, applied_date, "
+                "skills_raw, city_raw) VALUES (%(person_id)s, %(experience_years)s, "
+                "%(ctc_raw)s, %(ctc_annual_inr)s, %(ctc_was_lakhs)s, %(applied_date_raw)s, "
+                "%(applied_date)s, %(skills_raw)s, %(city_raw)s)",
+                applicant_rows,
+            )
+        if gig_rows:
+            cur.executemany(
+                "INSERT INTO gig_worker_details (person_id, rate_raw, rate_inr_per_hour, "
+                "status, skills_raw, location_raw) VALUES (%(person_id)s, %(rate_raw)s, "
+                "%(rate_inr_per_hour)s, %(status)s, %(skills_raw)s, %(location_raw)s)",
+                gig_rows,
+            )
+        if cbnexus_rows:
+            cur.executemany(
+                "INSERT INTO cbnexus_contacts (person_id, verified, verified_raw, "
+                "projects_completed, city_raw) VALUES (%(person_id)s, %(verified)s, "
+                "%(verified_raw)s, %(projects_completed)s, %(city_raw)s)",
+                cbnexus_rows,
+            )
+
+        touched_ids = {r["person_id"] for r in applicant_rows} | \
+                      {r["person_id"] for r in gig_rows} | \
+                      {r["person_id"] for r in cbnexus_rows} | \
+                      (set(registry.people.keys()) - existing_ids)
         with conn.cursor() as c:
-            c.execute(f"SELECT DISTINCT person_id FROM {table}")
-            return {row["person_id"] for row in c.fetchall()}
+            c.execute("SELECT person_ids, description FROM match_flags")
+            flag_rows = c.fetchall()
+            already_flagged = {row["person_ids"] for row in flag_rows}
+            already_flagged_desc = {row["description"] for row in flag_rows}
+        for name, pids, details in same_name_flags:
+            key = ",".join(str(p) for p in pids)
+            if key in already_flagged or not (set(pids) & touched_ids):
+                continue
+            cur.execute(
+                "INSERT INTO match_flags (issue_type, description, person_ids, "
+                "source_file) VALUES (%s, %s, %s, %s)",
+                ("ambiguous_same_name",
+                 f"'{name}' shared by {len(pids)} unmerged records with no common "
+                 f"phone/email: " + "; ".join(details),
+                 key, "uploaded_files"),
+            )
+        for cf in registry.field_conflicts:
+            if cf["description"] in already_flagged_desc:
+                continue
+            cur.execute(
+                "INSERT INTO match_flags (issue_type, description, person_ids, "
+                "source_file) VALUES (%s, %s, %s, %s)",
+                (cf["issue_type"], cf["description"],
+                 ",".join(str(p) for p in cf["person_ids"]), "uploaded_files"),
+            )
 
-    covered_applicant = already_covered("applicant_details")
-    covered_gig = already_covered("gig_worker_details")
-    covered_cbnexus = already_covered("cbnexus_contacts")
-    applicant_rows = [r for r in applicant_rows if r["person_id"] not in covered_applicant]
-    gig_rows = [r for r in gig_rows if r["person_id"] not in covered_gig]
-    cbnexus_rows = [r for r in cbnexus_rows if r["person_id"] not in covered_cbnexus]
-
-    if applicant_rows:
-        cur.executemany(
-            "INSERT INTO applicant_details (person_id, experience_years, ctc_raw, "
-            "ctc_annual_inr, ctc_was_lakhs, applied_date_raw, applied_date, "
-            "skills_raw, city_raw) VALUES (%(person_id)s, %(experience_years)s, "
-            "%(ctc_raw)s, %(ctc_annual_inr)s, %(ctc_was_lakhs)s, %(applied_date_raw)s, "
-            "%(applied_date)s, %(skills_raw)s, %(city_raw)s)",
-            applicant_rows,
-        )
-    if gig_rows:
-        cur.executemany(
-            "INSERT INTO gig_worker_details (person_id, rate_raw, rate_inr_per_hour, "
-            "status, skills_raw, location_raw) VALUES (%(person_id)s, %(rate_raw)s, "
-            "%(rate_inr_per_hour)s, %(status)s, %(skills_raw)s, %(location_raw)s)",
-            gig_rows,
-        )
-    if cbnexus_rows:
-        cur.executemany(
-            "INSERT INTO cbnexus_contacts (person_id, verified, verified_raw, "
-            "projects_completed, city_raw) VALUES (%(person_id)s, %(verified)s, "
-            "%(verified_raw)s, %(projects_completed)s, %(city_raw)s)",
-            cbnexus_rows,
-        )
-
-    touched_ids = {r["person_id"] for r in applicant_rows} | \
-                  {r["person_id"] for r in gig_rows} | \
-                  {r["person_id"] for r in cbnexus_rows} | \
-                  (set(registry.people.keys()) - existing_ids)
-    with conn.cursor() as c:
-        c.execute("SELECT person_ids, description FROM match_flags")
-        flag_rows = c.fetchall()
-        already_flagged = {row["person_ids"] for row in flag_rows}
-        already_flagged_desc = {row["description"] for row in flag_rows}
-    for name, pids, details in same_name_flags:
-        key = ",".join(str(p) for p in pids)
-        if key in already_flagged or not (set(pids) & touched_ids):
-            continue
-        cur.execute(
-            "INSERT INTO match_flags (issue_type, description, person_ids, "
-            "source_file) VALUES (%s, %s, %s, %s)",
-            ("ambiguous_same_name",
-             f"'{name}' shared by {len(pids)} unmerged records with no common "
-             f"phone/email: " + "; ".join(details),
-             key, "uploaded_files"),
-        )
-    for cf in registry.field_conflicts:
-        if cf["description"] in already_flagged_desc:
-            continue
-        cur.execute(
-            "INSERT INTO match_flags (issue_type, description, person_ids, "
-            "source_file) VALUES (%s, %s, %s, %s)",
-            (cf["issue_type"], cf["description"],
-             ",".join(str(p) for p in cf["person_ids"]), "uploaded_files"),
-        )
+        with conn.cursor() as c:
+            c.execute("SELECT COUNT(*) c FROM match_flags")
+            total_flags = c.fetchone()["c"]
 
     conn.commit()
 
     n_people = len(registry.people)
-    with conn.cursor() as c:
-        c.execute("SELECT COUNT(*) c FROM match_flags")
-        total_flags = c.fetchone()["c"]
     conn.close()
 
-    log(f"=== confirm_upload done: {n_people} total people in DB ===")
+    log(f"=== confirm_upload done: {n_people} total people in {target_table!r} ===")
 
     return {
+        "target_table": target_table,
         "total_people": n_people,
         "new_people": registry.stats["new"],
         "enriched_people": registry.stats["enriched"],
