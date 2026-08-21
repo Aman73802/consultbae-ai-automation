@@ -1,20 +1,27 @@
 # ConsultBae — AI Automation Take-Home
 
 Merges 3 messy source systems into one MySQL database, tags people's
-skills via an n8n + LLM automation, and collects audio submissions
-through a small Streamlit app that writes back into the same database.
+skills via an n8n + LLM automation, and collects audio submissions —
+all through one login-gated Streamlit app ("ConsultBae Ops Console")
+on top of a MySQL-backed pipeline.
 
 ## Repo structure
 
 ```
-data/                    the 3 source CSVs, + data/audio/ (uploaded recordings)
-common/                  shared code: db.py (connection/schema), normalize.py (cleaning rules)
-db/schema.sql            the MySQL schema
-db/start_mysql.sh        starts a local, self-contained MySQL server (no brew/sudo needed)
-db/stop_mysql.sh         stops it
-pipeline/merge.py        Task 1 — the merge pipeline
-app/                     Task 3 — the Streamlit audio collection app
-automation/              Task 2 — n8n workflow JSON + the Flask API it calls
+data/                       the 3 source CSVs, data/uploads/ (Task 1 UI uploads), data/audio/ (recordings)
+common/                     shared code: db.py (connection/schema), normalize.py (cleaning rules)
+db/schema.sql               the MySQL schema
+db/start_mysql.sh           starts a local, self-contained MySQL server (no brew/sudo needed)
+db/stop_mysql.sh            stops it
+pipeline/merge.py           Task 1 — the merge pipeline (run_merge(), used by both the CLI and the UI)
+app/streamlit_app.py        entry point: .env, theme, login gate, page navigation
+app/auth.py                 the login gate
+app/theme.py                custom CSS / branding
+app/merge_export.py         Task 1 UI: upload saving + CSV/Excel/PDF/SQL export
+app/audio_utils.py          Task 3: audio property extraction
+app/page_modules/           the 5 sidebar pages (one module each)
+automation/                 Task 2 — n8n workflow JSON + the Flask API it calls
+.env.example                template for MySQL / login / N8N_BASE_URL config
 ```
 
 ## Setup
@@ -25,21 +32,30 @@ also doesn't need a system install: `db/start_mysql.sh` downloads the
 official MySQL Community Server tarball into `.mysql-local/` (gitignored,
 ~500MB) on first run and starts it as your normal user — no Homebrew, no
 sudo. (If you already have MySQL running some other way — Homebrew,
-Docker, a managed instance — skip this script and just set the
-`MYSQL_HOST`/`MYSQL_PORT`/`MYSQL_USER`/`MYSQL_PASSWORD`/`MYSQL_DATABASE`
-env vars from `common/db.py` to point at it instead, then create an
-empty database with that name.)
+Docker, a managed instance — skip this script and just set the MySQL
+env vars below to point at it instead, then create an empty database
+with that name.)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 bash db/start_mysql.sh           # first run downloads MySQL; later runs just start it
+cp .env.example .env             # then edit if you want different values
 ```
 
-`bash db/stop_mysql.sh` stops it when you're done. `db/start_mysql.sh`
+`bash db/stop_mysql.sh` stops MySQL when you're done. `db/start_mysql.sh`
 is idempotent — it detects an already-initialized data dir / an
 already-running server and skips straight to "ready."
+
+`.env` (loaded automatically by the Streamlit app via `python-dotenv`;
+`.env.example` has the full template with working local-dev defaults):
+
+| Variable | Used for | Default |
+|---|---|---|
+| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | DB connection (`common/db.py`) | matches `db/start_mysql.sh`'s setup |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | the app's login gate (`app/auth.py`) | `admin` / `consultbae2026` |
+| `N8N_BASE_URL` | Skill Automation page's "Open Workflow Builder" link | `http://localhost:5678` |
 
 ## Run — Task 1 (merge)
 
@@ -65,52 +81,50 @@ cleaning/matching decision, then a summary:
   ...
 ```
 
-### Alternative: run Task 1 visually (Upload & Merge UI)
+## The app: ConsultBae Ops Console
 
-The CLI above is the primary, documented way to run Task 1. There's also
-a UI for it, in the same Streamlit app as everything else:
+Tasks 1, 2, and 3 also have a UI, all in one Streamlit app:
 
 ```bash
 bash db/start_mysql.sh
 streamlit run app/streamlit_app.py
 ```
 
-Then open the **1️⃣ Upload & Merge** tab: upload one or more CSVs,
-optionally include the original 3 seed files (on by default), and hit
-**Run Merge**. The **1️⃣ Merge Results** tab shows the live `persons`
-table with CSV/Excel/PDF/SQL export buttons.
+Opens at `http://localhost:8501`, behind a login screen
+(`ADMIN_USERNAME`/`ADMIN_PASSWORD` from `.env`). Once signed in, the
+sidebar has 5 pages:
 
-This UI path calls the exact same `run_merge()` function
-`pipeline/merge.py`'s CLI uses (same cleaning, same phone/email
-matching, same ambiguous-name flagging) — but **incrementally**, not as
-a full rebuild: it matches new rows against people already in the
-database instead of wiping everything first, so it doesn't erase Task 2
-skill tags or Task 3 audio submissions the way re-running the CLI does.
-A file's column headers are matched against the 3 known source schemas
-to decide how to clean it; a file that doesn't match any of them is
-skipped and reported, not guessed at.
-
-## Run — Task 3 (audio app)
-
-```bash
-bash db/start_mysql.sh           # if it isn't already running
-python3 pipeline/merge.py        # if you haven't already, to create the DB
-streamlit run app/streamlit_app.py
-```
-
-Opens at `http://localhost:8501`. **Submit Audio** page: enter name +
-phone, record in-browser or upload a file, submit — it's matched to an
-existing Task 1 person by phone (or a new person is created), audio
-properties are extracted, and everything is saved. **All Submissions**
-page: every submission with an inline player and its extracted
-properties.
-
-## Run — Task 2 (n8n automation)
-
-See [automation/README.md](automation/README.md) for the full walkthrough
-(starting the local API and n8n itself, starting the local Ollama LLM
-the workflow calls, importing `automation/skill_tagging_flow.json` into
-n8n, running it).
+- **Data Merge Engine** (Task 1) — multi-file CSV uploader, a live
+  status table of every uploaded file, a **Run Merge** button, and
+  directly below it the full current `persons` table with CSV/Excel/
+  PDF/SQL export buttons. This calls the exact same `run_merge()`
+  function the CLI uses (same cleaning, same phone/email matching,
+  same ambiguous-name flagging) — but **incrementally**, not as a full
+  rebuild: it matches new rows against people already in the database
+  instead of wiping everything first, so uploading through the UI
+  doesn't erase Task 2 skill tags or Task 3 audio submissions the way
+  re-running the CLI does. A file's column headers are matched against
+  the 3 known source schemas to decide how to clean it; a file that
+  doesn't match any of them is skipped and reported, not guessed at.
+  The merge result is written straight into the `persons` table as
+  part of running it — there's no separate save step.
+- **Skill Automation** (Task 2) — a deep link straight into n8n's
+  workflow builder (`N8N_BASE_URL/workflow/new`). n8n itself still has
+  to be running separately (see [automation/README.md](automation/README.md)
+  for the full walkthrough — starting n8n and the local Ollama LLM it
+  calls, importing `automation/skill_tagging_flow.json`, running it).
+  This page deliberately doesn't try to reimplement or embed n8n.
+- **Voice Intake** (Task 3) — record or upload audio, review the
+  extracted properties (duration, sample rate, bitrate, loudness,
+  quality estimate), then explicitly click **Add to Database** to link
+  it to a person and save the record. The audio file itself is saved
+  to disk as soon as it's analyzed; only the database write is gated
+  behind that confirmation. A second tab lists every submission with
+  an inline player.
+- **Data Quality Report** (Task 4) — the same findings as the section
+  below, rendered as browsable cards per source file.
+- **Scale Readiness Plan** (Task 5) — the same stretch analysis as
+  further down, rendered the same way.
 
 ---
 
