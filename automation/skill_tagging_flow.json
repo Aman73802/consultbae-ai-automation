@@ -52,7 +52,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You classify a person's technology skill list into exactly one category: automation-heavy, web dev, or data. automation-heavy means tools like n8n, Zapier, Selenium, web scraping, workflow or API automation. web dev means React, JavaScript, FastAPI, MySQL, front-end or back-end web app building. data means Pandas, MongoDB, SQL, LangChain, data pipeline or ML-adjacent skills. Reply with ONLY the category label and nothing else, no punctuation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Name: {{$json.full_name}}. Skills: {{$json.skills}}. Which category fits best?\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"openai/gpt-oss-20b\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You classify a person's technology skill list into exactly one category: automation-heavy, web dev, or data. automation-heavy means tools like n8n, Zapier, Selenium, web scraping, workflow or API automation. web dev means React, JavaScript, FastAPI, MySQL, front-end or back-end web app building. data means Pandas, MongoDB, SQL, LangChain, data pipeline or ML-adjacent skills. Reply with ONLY the category label and nothing else, no punctuation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Name: {{$json.full_name}}. Skills: {{$json.skills}}. Which category fits best?\"\n    }\n  ]\n}",
         "options": {}
       },
       "id": "c5b4d82e-bd21-4b3a-ab7f-517a10b415d6",

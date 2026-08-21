@@ -92,10 +92,20 @@ in the description above.
 
 The workflow's "Classify Skills via LLM" node calls **Groq**'s hosted,
 OpenAI-compatible API (`https://api.groq.com/openai/v1/chat/completions`,
-model `llama-3.1-8b-instant`) — free tier, no card required, and nothing
+model `openai/gpt-oss-20b`) — free tier, no card required, and nothing
 to run yourself. Create a **Header Auth** credential in n8n named
 "Groq API Key": Name = `Authorization`, Value = `Bearer <your key from
 console.groq.com>`, then select it on the node.
+
+Note the two separate "names" in that credential dialog, which are easy
+to mix up: the credential's own display name is "Groq API Key", but the
+*header* Name field must be literally `Authorization` (n8n rejects a
+header name containing spaces with "Header name must be a valid HTTP
+token"). And if Groq retires the model above (it did retire the
+`llama-3.1-*` line, which this workflow used to point at), you'll get
+"The model ... does not exist"; check
+https://console.groq.com/docs/models for the current ID and change just
+the `model` field in the node's JSON body.
 
 Same reasoning as before, just aimed at deployment instead of a local
 machine: this is a 3-label classification task from a short skill list,
