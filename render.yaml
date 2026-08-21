@@ -133,10 +133,46 @@ services:
         value: https
       - key: N8N_HOST
         value: nexora-n8n.onrender.com
-      - key: WEBHOOK_URL
+      - key: N8N_WEBHOOK_URL          # WEBHOOK_URL is deprecated in favour of this
         value: https://nexora-n8n.onrender.com/
+
+      # --- Fitting n8n into a 512MB free instance -------------------------
+      # It didn't, out of the box: "FATAL ERROR: Ineffective mark-compacts
+      # near heap limit - JavaScript heap out of memory", then a restart
+      # loop and 502s from Render's proxy. Capping V8's heap below the
+      # container limit makes it collect garbage aggressively instead of
+      # growing until the OOM killer steps in; the rest of these switch off
+      # subsystems this deployment has no use for. 512MB is genuinely tight
+      # for n8n, so treat this as making it *fit*, not as headroom.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=400
+      # The internal Python task runner already failed to start ("Python 3 is
+      # missing from this system") and nothing here uses Code-node Python.
+      - key: N8N_RUNNERS_ENABLED
+        value: "false"
+      - key: N8N_DIAGNOSTICS_ENABLED
+        value: "false"
+      - key: N8N_VERSION_NOTIFICATIONS_ENABLED
+        value: "false"
+      # Execution history is the other thing that grows without bound. Keep
+      # it (it's how you show the workflow actually ran) but prune it.
+      - key: EXECUTIONS_DATA_PRUNE
+        value: "true"
+      - key: EXECUTIONS_DATA_MAX_AGE
+        value: "168"   # hours == 1 week
+      - key: EXECUTIONS_DATA_PRUNE_MAX_COUNT
+        value: "50"
+
       - key: DB_TYPE
         value: postgresdb
+      # Neon's free tier suspends an idle database, and waking it takes long
+      # enough that n8n's default ping gave up ("Database ping failed (1/3):
+      # Database connection timed out"). A small pool also means fewer live
+      # sockets to hold open on a memory-starved instance.
+      - key: DB_POSTGRESDB_POOL_SIZE
+        value: "2"
+      - key: DB_POSTGRESDB_CONNECTION_TIMEOUT
+        value: "60000"
       - key: DB_POSTGRESDB_HOST
         sync: false
       - key: DB_POSTGRESDB_PORT
