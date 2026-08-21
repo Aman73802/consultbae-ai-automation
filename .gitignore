@@ -7,6 +7,9 @@ __pycache__/
 # this was set up on the dev machine) -- ~500MB, never committed
 .mysql-local/
 
+# local n8n instance data (credentials, execution history) -- never committed
+.n8n-local/
+
 # audio files uploaded through the Task 3 app
 data/audio/*
 !data/audio/.gitkeep
