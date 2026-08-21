@@ -18,6 +18,31 @@ from common.db import get_connection
 from pipeline.merge import run_merge, SEED_PATHS
 
 
+def _render_merge_summary(result):
+    """Per-row outcome breakdown for the run that just finished --
+    shown once, right after Run Merge, so it's clear the total count
+    moving by (say) 2 after uploading a 12-row file isn't a bug: 10 of
+    those rows matched people already in the database."""
+    st.success(
+        f"Merge complete — {result['total_people']} people now in the database. "
+        f"**{result['new_people']}** new people added, "
+        f"**{result['enriched_people']}** existing people enriched with new data, "
+        f"**{result['unchanged_matches']}** row(s) matched with no new information, "
+        f"**{result['conflicts_flagged']}** ambiguous/conflict case(s) flagged."
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("New people", result["new_people"])
+    c2.metric("Enriched", result["enriched_people"])
+    c3.metric("No new info", result["unchanged_matches"])
+    c4.metric("Conflicts flagged", result["conflicts_flagged"])
+
+    if result["unrecognized_files"]:
+        st.warning("Skipped (headers didn't match any known source format): "
+                   + ", ".join(os.path.basename(p) for p in result["unrecognized_files"]))
+    with st.expander("Full merge log"):
+        st.text("\n".join(result["log"]))
+
+
 def _run_merge_section(conn, upload_rows):
     st.markdown("#### Run merge")
     include_seed = st.checkbox(
@@ -65,23 +90,15 @@ def _run_merge_section(conn, upload_rows):
                 st.error(f"Merge failed: {e}")
                 return
 
-        st.success(
-            f"Merge complete -- {result['total_people']} people now in the "
-            f"database, {result['total_ambiguous_flags']} ambiguous "
-            f"same-name case(s) on record."
-        )
-        if result["unrecognized_files"]:
-            st.warning("Skipped (headers didn't match any known source "
-                       "format): " + ", ".join(os.path.basename(p) for p in result["unrecognized_files"]))
-        with st.expander("Full merge log"):
-            st.text("\n".join(result["log"]))
+        st.session_state["last_merge_summary"] = result
         st.rerun()
 
 
 def render():
     page_header("Data Merge Engine",
                 "Upload recruitment / gig-worker / CBNexus exports and merge "
-                "them into one deduplicated people database.")
+                "them into one deduplicated people database.",
+                eyebrow="01 — Task 1")
 
     conn = get_connection()
     try:
@@ -112,6 +129,10 @@ def render():
 
         _run_merge_section(conn, upload_rows)
 
+        last_summary = st.session_state.get("last_merge_summary")
+        if last_summary:
+            _render_merge_summary(last_summary)
+
         st.divider()
         st.markdown("#### Current merged database")
         df = me.fetch_people_df(conn)
@@ -138,10 +159,17 @@ def render():
                         "FROM match_flags ORDER BY id")
             flags = cur.fetchall()
         if flags:
-            card("Ambiguous same-name cases",
-                 f"{len(flags)} case(s) where a name repeats but phone/email "
-                 f"evidence didn't confirm it's the same person -- kept as "
-                 f"separate records rather than guessed at.",
+            n_same_name = sum(1 for f in flags if f["issue_type"] == "ambiguous_same_name")
+            n_identity = sum(1 for f in flags if f["issue_type"] == "identity_conflict")
+            n_field = sum(1 for f in flags if f["issue_type"] == "field_conflict")
+            card("Flagged for human review",
+                 f"{len(flags)} case(s) the merge could not confidently resolve on "
+                 f"its own -- kept as separate/unchanged records rather than "
+                 f"guessed at: <b>{n_same_name}</b> ambiguous same-name match(es), "
+                 f"<b>{n_identity}</b> identity conflict(s) (phone and email pointed "
+                 f"to different existing people), <b>{n_field}</b> field-level "
+                 f"conflict(s) (new data disagreed with an existing record and "
+                 f"was not applied).",
                  tag="Task 1 — match_flags")
             with st.expander("View details"):
                 st.dataframe(flags, width="stretch", hide_index=True)

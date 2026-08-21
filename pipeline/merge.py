@@ -258,6 +258,14 @@ class PersonRegistry:
         self.phone_index = {}     # normalized phone -> person_id
         self.email_index = {}     # normalized email -> person_id
         self._next_id = 1
+        # Per-run outcome counts for the "X new / Y enriched / Z unchanged /
+        # W conflicts" summary -- reset per PersonRegistry instance, i.e.
+        # per run_merge() call, so they describe *this run's* rows only.
+        self.stats = {"new": 0, "enriched": 0, "unchanged": 0, "conflict": 0}
+        # Structured field-level / identity conflicts, written to
+        # match_flags by run_merge() (separate from the same-name check,
+        # which is a different kind of ambiguity).
+        self.field_conflicts = []
 
     def _log(self, msg):
         self.log_list.append(msg)
@@ -282,24 +290,70 @@ class PersonRegistry:
                        f"point to different existing persons {candidates} for "
                        f"row {full_name!r} ({source_system}) -- kept unmerged, "
                        f"flagged for review")
+            self.stats["conflict"] += 1
+            self.field_conflicts.append({
+                "issue_type": "identity_conflict",
+                "description": (
+                    f"Row {full_name!r} ({source_system}): phone {phone!r} and "
+                    f"email {email!r} match different existing person_id values "
+                    f"{sorted(candidates)} -- not auto-merged, kept as a new "
+                    f"separate record for review."
+                ),
+                "person_ids": sorted(candidates),
+            })
             return self._create(full_name, phone, email, city, source_system)
 
         if len(candidates) == 1:
             person_id = next(iter(candidates))
             p = self.people[person_id]
             p["source_systems"].add(source_system)
-            if phone and not p["phone"]:
-                p["phone"] = phone
-            if email and not p["email"]:
-                p["email"] = email
-            if city and not p["city"]:
-                p["city"] = city
+
+            # Fill any field that's currently empty; if a field already
+            # has a value and this row disagrees, don't silently
+            # overwrite it -- record the conflict and leave the existing
+            # value in place, same spirit as the identity conflict above.
+            enriched = False
+            conflicts = []
+            for field, new_val in (("phone", phone), ("email", email), ("city", city)):
+                if not new_val:
+                    continue
+                existing_val = p[field]
+                if not existing_val:
+                    p[field] = new_val
+                    enriched = True
+                elif existing_val != new_val:
+                    conflicts.append((field, existing_val, new_val))
+
             if phone:
                 self.phone_index.setdefault(phone, person_id)
             if email:
                 self.email_index.setdefault(email, person_id)
+
+            if conflicts:
+                self.stats["conflict"] += 1
+                desc_bits = "; ".join(
+                    f"{f}: existing={ev!r} vs new={nv!r}" for f, ev, nv in conflicts)
+                self._log(f"[match] CONFLICT: person_id={person_id} "
+                          f"({p['full_name']!r}) -- new data from row {full_name!r} "
+                          f"({source_system}) disagrees with the existing record "
+                          f"and was NOT applied: {desc_bits}")
+                self.field_conflicts.append({
+                    "issue_type": "field_conflict",
+                    "description": (
+                        f"person_id={person_id} ({p['full_name']!r}): new data from "
+                        f"{source_system} conflicts with the existing record and "
+                        f"was not applied -- {desc_bits}"
+                    ),
+                    "person_ids": [person_id],
+                })
+            elif enriched:
+                self.stats["enriched"] += 1
+            else:
+                self.stats["unchanged"] += 1
+
             return person_id
 
+        self.stats["new"] += 1
         return self._create(full_name, phone, email, city, source_system)
 
     def _create(self, full_name, phone, email, city, source_system):
@@ -578,6 +632,14 @@ def run_merge(file_paths, fresh=False):
                  ",".join(str(p) for p in pids),
                  "source1/source2/source3"),
             )
+        for cf in registry.field_conflicts:
+            cur.execute(
+                "INSERT INTO match_flags (issue_type, description, person_ids, "
+                "source_file) VALUES (%s, %s, %s, %s)",
+                (cf["issue_type"], cf["description"],
+                 ",".join(str(p) for p in cf["person_ids"]),
+                 "source1/source2/source3"),
+            )
     else:
         # Only flag conflicts involving a person touched by *this* run
         # (a newly created person, or one whose data just changed) --
@@ -588,8 +650,10 @@ def run_merge(file_paths, fresh=False):
                       {r["person_id"] for r in cbnexus_rows} | \
                       (set(registry.people.keys()) - existing_ids)
         with conn.cursor() as c:
-            c.execute("SELECT person_ids FROM match_flags")
-            already_flagged = {row["person_ids"] for row in c.fetchall()}
+            c.execute("SELECT person_ids, description FROM match_flags")
+            flag_rows = c.fetchall()
+            already_flagged = {row["person_ids"] for row in flag_rows}
+            already_flagged_desc = {row["description"] for row in flag_rows}
         for name, pids, details in same_name_flags:
             key = ",".join(str(p) for p in pids)
             if key in already_flagged:
@@ -603,6 +667,21 @@ def run_merge(file_paths, fresh=False):
                  f"'{name}' shared by {len(pids)} unmerged records with no common "
                  f"phone/email: " + "; ".join(details),
                  key, "uploaded_files"),
+            )
+        # Field/identity conflicts are inherently tied to *this run's*
+        # rows (a row just read from an uploaded file disagreeing with
+        # what's already in the DB), so no touched_ids filter is needed
+        # -- just skip an exact-duplicate description in case the same
+        # file gets processed twice.
+        for cf in registry.field_conflicts:
+            if cf["description"] in already_flagged_desc:
+                continue
+            cur.execute(
+                "INSERT INTO match_flags (issue_type, description, person_ids, "
+                "source_file) VALUES (%s, %s, %s, %s)",
+                (cf["issue_type"], cf["description"],
+                 ",".join(str(p) for p in cf["person_ids"]),
+                 "uploaded_files"),
             )
 
     conn.commit()
@@ -630,6 +709,16 @@ def run_merge(file_paths, fresh=False):
         "source3_rows": len(s3),
         "new_ambiguous_flags_this_run": len(same_name_flags) if fresh else None,
         "total_ambiguous_flags": total_flags,
+        # Per-row outcome breakdown for *this run's* rows (source1+2+3
+        # rows across every file just processed, seed files included if
+        # the caller included them) -- new person created, existing
+        # person filled in with previously-missing data, existing person
+        # matched but the row had nothing new to add, or the row's data
+        # conflicted with the existing record and was left untouched.
+        "new_people": registry.stats["new"],
+        "enriched_people": registry.stats["enriched"],
+        "unchanged_matches": registry.stats["unchanged"],
+        "conflicts_flagged": registry.stats["conflict"],
         "unrecognized_files": unrecognized,
         "log": log_list,
     }
