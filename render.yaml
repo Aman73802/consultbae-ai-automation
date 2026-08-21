@@ -90,12 +90,23 @@ services:
     plan: free
     image:
       url: docker.io/n8nio/n8n:latest
-    dockerCommand: >-
-      sh -c "N8N_PORT=$PORT N8N_PROTOCOL=https N8N_HOST=$RENDER_EXTERNAL_HOSTNAME
-      WEBHOOK_URL=https://$RENDER_EXTERNAL_HOSTNAME/ n8n start"
+    # Render already runs dockerCommand through a shell, so wrapping it in
+    # another `sh -c "..."` collapsed the quoting and made the whole string
+    # be treated as one command name ("... n8n start: not found", exit 127).
+    # Plain command here; the N8N_* settings that command used to inline are
+    # ordinary envVars below instead.
+    dockerCommand: n8n start
     envVars:
       - key: N8N_ENCRYPTION_KEY
         generateValue: true
+      - key: N8N_PORT
+        value: "10000"  # Render's default $PORT for web services
+      - key: N8N_PROTOCOL
+        value: https
+      - key: N8N_HOST
+        value: nexora-n8n.onrender.com
+      - key: WEBHOOK_URL
+        value: https://nexora-n8n.onrender.com/
       - key: DB_TYPE
         value: postgresdb
       - key: DB_POSTGRESDB_HOST
