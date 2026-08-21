@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: consultbae
+          MYSQL_USER: consultbae
+          MYSQL_PASSWORD: consultbae_dev_pw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_USER: consultbae
+      MYSQL_PASSWORD: consultbae_dev_pw
+      MYSQL_DATABASE: consultbae
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # Only common/ has type hints so far (an incremental first pass --
+      # see pyproject.toml's [tool.mypy]); scoped to match, not the whole
+      # repo, since the rest is intentionally untyped for now.
+      - name: Type check (mypy)
+        run: mypy common/
+
+      - name: Test (pytest)
+        run: pytest tests/ -v
