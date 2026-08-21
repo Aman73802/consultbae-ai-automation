@@ -30,6 +30,14 @@ services:
     # not these two same-origin heuristics.
     startCommand: streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
     envVars:
+      # Render defaults to the newest Python it offers (3.14 at time of
+      # writing). Python 3.13 removed the audioop stdlib module (PEP 594),
+      # which pydub imports -- so the app died on startup with
+      # "No module named 'pyaudioop'". 3.12 is the newest release that
+      # still ships audioop. Also kept in .python-version so the pin is
+      # visible in the repo, not only in this file.
+      - key: PYTHON_VERSION
+        value: "3.12.8"
       - key: MYSQL_HOST
         sync: false
       # TiDB Cloud serves MySQL on 4000, not MySQL's usual 3306. Hardcoded
@@ -67,6 +75,14 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python3 automation/api_server.py
     envVars:
+      # Render defaults to the newest Python it offers (3.14 at time of
+      # writing). Python 3.13 removed the audioop stdlib module (PEP 594),
+      # which pydub imports -- so the app died on startup with
+      # "No module named 'pyaudioop'". 3.12 is the newest release that
+      # still ships audioop. Also kept in .python-version so the pin is
+      # visible in the repo, not only in this file.
+      - key: PYTHON_VERSION
+        value: "3.12.8"
       - key: MYSQL_HOST
         sync: false
       # TiDB Cloud serves MySQL on 4000, not MySQL's usual 3306. Hardcoded
