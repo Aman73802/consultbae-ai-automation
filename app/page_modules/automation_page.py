@@ -25,7 +25,8 @@ def _n8n_reachable():
 
 def render():
     page_header("Skill Automation",
-                "LLM-based skill-category tagging, built and run in n8n.")
+                "LLM-based skill-category tagging, built and run in n8n.",
+                eyebrow="02 — Task 2")
 
     card(
         "What this automation does",

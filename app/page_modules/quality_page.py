@@ -141,7 +141,8 @@ CROSS_FILE = [
 def render():
     page_header("Data Quality Report",
                 "Every data quality issue found across the 3 source files, "
-                "and exactly what the pipeline does about each one.")
+                "and exactly what the pipeline does about each one.",
+                eyebrow="04 — Task 4")
 
     for source in SOURCES:
         st.markdown(f"### {source['file']}")

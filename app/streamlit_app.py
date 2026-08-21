@@ -19,7 +19,7 @@ load_dotenv()  # must happen before common.db (or anything importing it)
 import streamlit as st
 
 from app import auth
-from app.theme import inject_css, render_sidebar_brand, APP_NAME
+from app.theme import inject_css, render_sidebar_brand, render_scroll_to_top, APP_NAME
 from app.page_modules import merge_page, automation_page, voice_page, quality_page, scale_page
 from common.db import get_connection, init_schema
 
@@ -56,3 +56,5 @@ nav = st.navigation(pages)
 auth.render_logout_control()
 
 nav.run()
+
+render_scroll_to_top()

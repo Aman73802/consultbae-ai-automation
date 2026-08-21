@@ -74,7 +74,8 @@ PRIORITY = [
 def render():
     page_header("Scale Readiness Plan",
                 "What breaks first if the audio intake app went from a "
-                "demo to 5,000 gig workers over a single launch weekend.")
+                "demo to 5,000 gig workers over a single launch weekend.",
+                eyebrow="05 — Task 5")
 
     for title, body in SECTIONS:
         card(title, body)

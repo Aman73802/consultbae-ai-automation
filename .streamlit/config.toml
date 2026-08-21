@@ -1,0 +1,44 @@
+# Cinematic dark-studio theme: near-black canvas, oversized bold type,
+# hairline borders, one restrained off-white accent. This is the native
+# Streamlit theming layer (colors, fonts, radii) -- it's what themes
+# built-in widgets that CSS alone can't reach (dataframe grid, selectboxes,
+# checkboxes, alerts). The smooth-scroll feel, reveal animations, and
+# hover motion live in app/theme.py's injected CSS on top of this.
+
+[theme]
+base = "dark"
+primaryColor = "#EDEDEA"
+backgroundColor = "#0A0A0A"
+secondaryBackgroundColor = "#131313"
+textColor = "#EDEDEA"
+
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+baseFontSize = 17
+
+headingFontSizes = ["3.2rem", "2.1rem", "1.5rem", "1.15rem", "1rem", "0.9rem"]
+headingFontWeights = [800, 800, 700, 600, 600, 600]
+
+linkColor = "#EDEDEA"
+codeBackgroundColor = "#161616"
+
+baseRadius = "small"
+buttonRadius = "full"
+borderColor = "#2a2a2a"
+dataframeBorderColor = "#2a2a2a"
+showWidgetBorder = true
+showSidebarBorder = false
+
+redColor = "#FF6B57"
+greenColor = "#7CF29C"
+yellowColor = "#F5D949"
+orangeColor = "#F2A65C"
+blueColor = "#8FA8FF"
+grayColor = "#8a8a85"
+
+[theme.sidebar]
+primaryColor = "#EDEDEA"
+backgroundColor = "#0A0A0A"
+secondaryBackgroundColor = "#111111"
+textColor = "#EDEDEA"
+borderColor = "#1f1f1f"

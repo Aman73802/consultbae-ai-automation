@@ -173,7 +173,8 @@ def _render_submissions_tab(conn):
 def render():
     page_header("Voice Intake",
                 "Record or upload a submission, review the extracted "
-                "properties, then confirm before it's written to the database.")
+                "properties, then confirm before it's written to the database.",
+                eyebrow="03 — Task 3")
 
     conn = get_connection()
     try:
