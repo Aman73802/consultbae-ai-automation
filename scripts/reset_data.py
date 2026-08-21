@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from common.db import get_connection, reset_data
+from common.db import get_connection, reset_data  # noqa: E402 -- must follow load_dotenv() above
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOAD_DIR = os.path.join(REPO_ROOT, "data", "uploads")

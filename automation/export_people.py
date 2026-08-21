@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from automation.api_server import combined_skills
-from common.db import get_connection, DB_PATH
+from common.db import DB_PATH, get_connection
 
 OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "people_export.json")
 

@@ -5,7 +5,7 @@ card-based rendering. Keep in sync with the README if either changes.
 """
 import streamlit as st
 
-from app.theme import page_header, card
+from app.theme import card, page_header
 
 SECTIONS = [
     ("What breaks first — the single, un-pooled MySQL instance",

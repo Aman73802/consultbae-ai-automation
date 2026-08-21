@@ -17,13 +17,19 @@ from dotenv import load_dotenv
 load_dotenv()  # must happen before common.db (or anything importing it)
                # is imported anywhere, since it reads MYSQL_* at import time
 
-import streamlit as st
+import streamlit as st  # noqa: E402 -- all imports below must follow load_dotenv() above
 
-from app import auth
-from app.theme import inject_css, render_sidebar_brand, render_scroll_to_top, APP_NAME
-from app.page_modules import (merge_page, automation_page, voice_page, quality_page,
-                               scale_page, settings_page)
-from common.db import ensure_users_table, get_connection, init_schema, seed_admin_user
+from app import auth  # noqa: E402
+from app.page_modules import (  # noqa: E402
+    automation_page,
+    merge_page,
+    quality_page,
+    scale_page,
+    settings_page,
+    voice_page,
+)
+from app.theme import APP_NAME, inject_css, render_scroll_to_top, render_sidebar_brand  # noqa: E402
+from common.db import ensure_users_table, get_connection, init_schema, seed_admin_user  # noqa: E402
 
 st.set_page_config(page_title=APP_NAME, page_icon="🔷", layout="wide",
                     initial_sidebar_state="expanded")

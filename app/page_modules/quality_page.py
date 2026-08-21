@@ -9,7 +9,7 @@ nicer way to browse the same facts.
 """
 import streamlit as st
 
-from app.theme import page_header, card
+from app.theme import card, page_header
 
 SOURCES = [
     {

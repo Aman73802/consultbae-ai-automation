@@ -10,7 +10,7 @@ import os
 import requests
 import streamlit as st
 
-from app.theme import page_header, card
+from app.theme import card, page_header
 
 N8N_BASE_URL = os.environ.get("N8N_BASE_URL", "http://localhost:5678").rstrip("/")
 

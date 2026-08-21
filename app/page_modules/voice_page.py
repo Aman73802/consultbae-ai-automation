@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import streamlit as st
 
 from app.audio_utils import extract_properties
-from app.theme import page_header, card
+from app.theme import page_header
 from common import normalize as norm
 from common.db import get_connection
 

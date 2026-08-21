@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, jsonify, request
 
-from common.db import get_connection, DB_PATH
+from common.db import DB_PATH, get_connection
 
 app = Flask(__name__)
 

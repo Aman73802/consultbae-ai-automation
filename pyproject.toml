@@ -1,0 +1,30 @@
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+exclude = [
+    ".mysql-local",
+    ".n8n-local",
+    ".node-local",
+    ".ollama-local",
+    ".venv",
+]
+
+[tool.ruff.lint]
+# Bug-catching rules only -- not a full style reformat of an already
+# hand-formatted codebase. E501 (line-too-long) is off: this project
+# wraps prose comments by hand at ~79 cols, which isn't something a
+# linter should flag as an error.
+select = ["E", "F", "W", "B", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "common", "pipeline", "automation"]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = ["^\\.mysql-local/", "^\\.n8n-local/", "^\\.node-local/", "^\\.ollama-local/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

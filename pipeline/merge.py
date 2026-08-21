@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 
 from common import normalize as norm
-from common.db import get_connection, init_schema, DB_PATH
+from common.db import DB_PATH, get_connection, init_schema
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
@@ -976,7 +976,7 @@ def run_merge(file_paths, fresh=False):
     cur = conn.cursor()
 
     if fresh:
-        for pid, p in sorted(registry.people.items()):
+        for _pid, p in sorted(registry.people.items()):
             cur.execute(
                 "INSERT INTO persons (person_id, full_name, email, phone, city, "
                 "source_systems) VALUES (%s, %s, %s, %s, %s, %s)",

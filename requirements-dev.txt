@@ -1,0 +1,5 @@
+# Dev-only tooling (lint, type-check, test) -- not needed to run the app,
+# only to develop it. Install with: pip install -r requirements-dev.txt
+ruff==0.16.4
+mypy==1.19.1
+pytest==8.4.2

@@ -11,7 +11,7 @@ import os
 
 import streamlit as st
 
-from app.theme import page_header, card
+from app.theme import card, page_header
 from common.db import get_connection, reset_data
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -41,7 +41,7 @@ def _render_danger_zone():
     )
 
     confirm_text = st.text_input(
-        f"Type RESET to confirm",
+        "Type RESET to confirm",
         key="reset_confirm_text",
         placeholder="RESET",
     )

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import streamlit as st
 
 from app import merge_export as me
-from app.theme import page_header, card
+from app.theme import card, page_header
 from common.db import get_connection, list_person_tables, validate_person_table_name
 from pipeline.merge import analyze_upload, confirm_upload
 

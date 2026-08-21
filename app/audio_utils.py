@@ -15,8 +15,8 @@ import static_ffmpeg
 
 static_ffmpeg.add_paths()
 
-from pydub import AudioSegment
-from pydub.utils import mediainfo
+from pydub import AudioSegment  # noqa: E402 -- must follow add_paths() above
+from pydub.utils import mediainfo  # noqa: E402
 
 SILENCE_CHUNK_MS = 200
 SILENCE_THRESHOLD_DB = -40.0
