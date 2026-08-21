@@ -1,0 +1,160 @@
+{
+  "name": "ConsultBae - Skill Category Auto-Tagging",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1a417249-0030-4d41-8704-3b615a25ff57",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://localhost:5001/api/people",
+        "authentication": "none",
+        "options": {}
+      },
+      "id": "9d60209c-d723-4864-a258-50db364a0172",
+      "name": "Fetch People Needing Tags",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You classify a person's technology skill list into exactly one category: automation-heavy, web dev, or data. automation-heavy means tools like n8n, Zapier, Selenium, web scraping, workflow or API automation. web dev means React, JavaScript, FastAPI, MySQL, front-end or back-end web app building. data means Pandas, MongoDB, SQL, LangChain, data pipeline or ML-adjacent skills. Reply with ONLY the category label and nothing else, no punctuation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Name: {{$json.full_name}}. Skills: {{$json.skills}}. Which category fits best?\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "bdf513bb-61db-44ad-92e5-4f8997bbafc9",
+      "name": "Classify Skills via LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "OpenAI API Key (Header Auth)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const raw = ($json.choices && $json.choices[0] && $json.choices[0].message && $json.choices[0].message.content) || \"\";\nconst cleaned = raw.trim().toLowerCase().replace(/[\"'.]/g, \"\");\nconst allowed = [\"automation-heavy\", \"web dev\", \"data\"];\nconst category = allowed.includes(cleaned) ? cleaned : \"data\";\n\nconst person = $(\"Fetch People Needing Tags\").item.json;\n\nreturn {\n  json: {\n    person_id: person.person_id,\n    full_name: person.full_name,\n    skills: person.skills,\n    skill_category: category,\n    raw_llm_response: raw\n  }\n};"
+      },
+      "id": "76b0b873-d734-4651-80ef-58745933739b",
+      "name": "Extract Skill Category",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://localhost:5001/api/people/{{$json.person_id}}/skill_category",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"skill_category\": \"{{$json.skill_category}}\"\n}",
+        "options": {}
+      },
+      "id": "1181c0c6-b17f-4783-9ae2-6fc09dd87f7f",
+      "name": "Write Back to Database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch People Needing Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch People Needing Tags": {
+      "main": [
+        [
+          {
+            "node": "Classify Skills via LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Skills via LLM": {
+      "main": [
+        [
+          {
+            "node": "Extract Skill Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Skill Category": {
+      "main": [
+        [
+          {
+            "node": "Write Back to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "consultbae-assignment"
+  }
+}
