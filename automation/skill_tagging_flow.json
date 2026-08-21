@@ -15,7 +15,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://nexora-api.onrender.com/api/people",
+        "url": "https://nexora-api-4v2w.onrender.com/api/people",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {}
@@ -88,7 +88,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://nexora-api.onrender.com/api/people/{{$json.person_id}}/skill_category",
+        "url": "=https://nexora-api-4v2w.onrender.com/api/people/{{$json.person_id}}/skill_category",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
