@@ -305,56 +305,63 @@ class PersonRegistry:
 
         if len(candidates) == 1:
             person_id = next(iter(candidates))
-            p = self.people[person_id]
-            p["source_systems"].add(source_system)
-
-            # Fill any field that's currently empty; if a field already
-            # has a value and this row disagrees, don't silently
-            # overwrite it -- record the conflict and leave the existing
-            # value in place, same spirit as the identity conflict above.
-            enriched = False
-            conflicts = []
-            for field, new_val in (("phone", phone), ("email", email), ("city", city)):
-                if not new_val:
-                    continue
-                existing_val = p[field]
-                if not existing_val:
-                    p[field] = new_val
-                    enriched = True
-                elif existing_val != new_val:
-                    conflicts.append((field, existing_val, new_val))
-
-            if phone:
-                self.phone_index.setdefault(phone, person_id)
-            if email:
-                self.email_index.setdefault(email, person_id)
-
-            if conflicts:
-                self.stats["conflict"] += 1
-                desc_bits = "; ".join(
-                    f"{f}: existing={ev!r} vs new={nv!r}" for f, ev, nv in conflicts)
-                self._log(f"[match] CONFLICT: person_id={person_id} "
-                          f"({p['full_name']!r}) -- new data from row {full_name!r} "
-                          f"({source_system}) disagrees with the existing record "
-                          f"and was NOT applied: {desc_bits}")
-                self.field_conflicts.append({
-                    "issue_type": "field_conflict",
-                    "description": (
-                        f"person_id={person_id} ({p['full_name']!r}): new data from "
-                        f"{source_system} conflicts with the existing record and "
-                        f"was not applied -- {desc_bits}"
-                    ),
-                    "person_ids": [person_id],
-                })
-            elif enriched:
-                self.stats["enriched"] += 1
-            else:
-                self.stats["unchanged"] += 1
-
+            self._apply_to_existing(person_id, full_name, phone, email, city, source_system)
             return person_id
 
         self.stats["new"] += 1
         return self._create(full_name, phone, email, city, source_system)
+
+    def _apply_to_existing(self, person_id, full_name, phone, email, city, source_system):
+        """Merges one row into an already-identified existing person:
+        fills any field that's currently empty; if a field already has a
+        value and this row disagrees, doesn't silently overwrite it --
+        records the conflict (written to match_flags by the caller) and
+        leaves the existing value in place. Shared by the automatic
+        phone/email-match path (upsert(), above) and the human-resolved
+        path (confirm_upload(), below) so both go through one tested
+        implementation of "what does merging a row into person X mean."
+        """
+        p = self.people[person_id]
+        p["source_systems"].add(source_system)
+
+        enriched = False
+        conflicts = []
+        for field, new_val in (("phone", phone), ("email", email), ("city", city)):
+            if not new_val:
+                continue
+            existing_val = p[field]
+            if not existing_val:
+                p[field] = new_val
+                enriched = True
+            elif existing_val != new_val:
+                conflicts.append((field, existing_val, new_val))
+
+        if phone:
+            self.phone_index.setdefault(phone, person_id)
+        if email:
+            self.email_index.setdefault(email, person_id)
+
+        if conflicts:
+            self.stats["conflict"] += 1
+            desc_bits = "; ".join(
+                f"{f}: existing={ev!r} vs new={nv!r}" for f, ev, nv in conflicts)
+            self._log(f"[match] CONFLICT: person_id={person_id} "
+                      f"({p['full_name']!r}) -- new data from row {full_name!r} "
+                      f"({source_system}) disagrees with the existing record "
+                      f"and was NOT applied: {desc_bits}")
+            self.field_conflicts.append({
+                "issue_type": "field_conflict",
+                "description": (
+                    f"person_id={person_id} ({p['full_name']!r}): new data from "
+                    f"{source_system} conflicts with the existing record and "
+                    f"was not applied -- {desc_bits}"
+                ),
+                "person_ids": [person_id],
+            })
+        elif enriched:
+            self.stats["enriched"] += 1
+        else:
+            self.stats["unchanged"] += 1
 
     def _create(self, full_name, phone, email, city, source_system):
         person_id = self._next_id
@@ -372,6 +379,76 @@ class PersonRegistry:
         if email:
             self.email_index.setdefault(email, person_id)
         return person_id
+
+    def find_name_candidates(self, full_name, limit=5):
+        """Simple substring/token-overlap name-similarity search over
+        every person known so far (existing DB + anyone already
+        provisionally created earlier in this same analyze pass) -- used
+        by propose() to surface "might be this person" candidates for
+        rows with no phone/email match at all. Not a fuzzy-matching
+        library, just: exact normalized name > one name contains the
+        other > shares at least one name token."""
+        key = norm.normalize_name_key(full_name)
+        if not key:
+            return []
+        tokens = set(key.split())
+        scored = []
+        for pid, p in self.people.items():
+            existing_key = norm.normalize_name_key(p["full_name"])
+            if not existing_key:
+                continue
+            if key == existing_key:
+                score = 100
+            elif key in existing_key or existing_key in key:
+                score = 80
+            else:
+                overlap = len(tokens & set(existing_key.split()))
+                if overlap == 0:
+                    continue
+                score = 40 + overlap * 10
+            scored.append((score, pid))
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        return [pid for _, pid in scored[:limit]]
+
+    def propose(self, full_name, phone, email, city, source_system):
+        """Dry-run classification of one row, used by analyze_upload()
+        -- decides what *would* happen without changing any state.
+        Returns {"action": "auto_match"|"needs_review"|"create_new",
+        "candidates": [person_id, ...], "default": person_id or None}.
+        """
+        candidates = self.resolve(phone, email)
+
+        if len(candidates) == 1:
+            return {"action": "auto_match", "candidates": sorted(candidates),
+                    "default": next(iter(candidates))}
+
+        if len(candidates) > 1:
+            # Same "identity conflict" case upsert() flags -- genuinely
+            # ambiguous which existing person this is, so no safe guess;
+            # default to Create as New rather than silently picking one.
+            return {"action": "needs_review", "candidates": sorted(candidates),
+                    "default": None, "reason": "identity_conflict"}
+
+        name_candidates = self.find_name_candidates(full_name)
+        if name_candidates:
+            return {"action": "needs_review", "candidates": name_candidates,
+                    "default": name_candidates[0], "reason": "similar_name"}
+
+        return {"action": "create_new", "candidates": [], "default": None}
+
+    def provisional_apply(self, proposal, full_name, phone, email, city, source_system):
+        """Applies a propose() result using its default guess, purely so
+        *later* rows in the same analyze_upload() batch still chain
+        correctly against earlier ones (e.g. a source3 row linking back
+        to a person a source1 row in the same file just proposed). This
+        is throwaway state -- analyze_upload() discards this registry
+        afterward; confirm_upload() rebuilds fresh from the real DB and
+        replays with the admin's actual choices, not these defaults."""
+        default = proposal["default"]
+        if default is not None:
+            self._apply_to_existing(default, full_name, phone, email, city, source_system)
+        else:
+            self._create(full_name, phone, email, city, source_system)
 
     def detect_same_name_conflicts(self):
         """Post-hoc check: two distinct persons that were never merged
@@ -427,6 +504,314 @@ def load_existing_registry(conn, log_list):
         max_id = max(max_id, pid)
     registry._next_id = max_id + 1
     return registry
+
+
+def _clean_and_concat(file_paths, log_list):
+    """Shared by analyze_upload() and run_merge(): detects each file's
+    source type, cleans it, and concatenates same-source frames. Split
+    out so the two don't drift on how a file becomes a dataframe."""
+    def log(msg):
+        log_list.append(msg)
+        print(msg)
+
+    s1_frames, s2_frames, s3_frames = [], [], []
+    unrecognized = []
+    for path in file_paths:
+        kind = detect_source_type(path)
+        if kind == "source1":
+            s1_frames.append(clean_source1(path, log_list))
+        elif kind == "source2":
+            s2_frames.append(clean_source2(path, log_list))
+        elif kind == "source3":
+            s3_frames.append(clean_source3(path, log_list))
+        else:
+            unrecognized.append(path)
+            log(f"[clean] unrecognized column schema, skipped: {path}")
+
+    empty1 = pd.DataFrame(columns=["Full Name", "Email", "Phone", "City",
+                                    "Experience (Years)", "Current CTC",
+                                    "Applied Date", "Skills", "phone_norm",
+                                    "email_norm", "city_norm", "applied_date_norm",
+                                    "ctc_annual_inr", "ctc_was_lakhs"])
+    empty2 = pd.DataFrame(columns=["email_id", "worker_name", "rate", "location",
+                                    "status", "skill_tags", "email_norm",
+                                    "location_norm", "status_norm", "rate_inr_per_hour"])
+    empty3 = pd.DataFrame(columns=["Name", "Phone Number", "City", "Verified",
+                                    "Projects Completed", "phone_norm", "city_norm",
+                                    "verified_norm", "projects_completed_norm"])
+
+    s1 = pd.concat(s1_frames, ignore_index=True) if s1_frames else empty1
+    s2 = pd.concat(s2_frames, ignore_index=True) if s2_frames else empty2
+    s3 = pd.concat(s3_frames, ignore_index=True) if s3_frames else empty3
+    return s1, s2, s3, unrecognized
+
+
+# ---------------------------------------------------------------------
+# analyze_upload / confirm_upload -- the human-reviewed alternative to
+# run_merge(fresh=False) used by the Upload & Merge UI. analyze_upload()
+# is a dry run: it classifies every row as a confident auto-match, a
+# case that needs a human to pick the right existing person (or confirm
+# it's genuinely new), or an uncontested new person -- without writing
+# anything. confirm_upload() takes the admin's decisions for the
+# needs-review rows and does the actual writing. run_merge() itself is
+# untouched by any of this -- the CLI's fresh=True path still works
+# exactly as before.
+# ---------------------------------------------------------------------
+
+def analyze_upload(file_paths):
+    log_list = []
+
+    def log(msg):
+        log_list.append(msg)
+        print(msg)
+
+    log(f"=== analyze_upload starting ({len(file_paths)} file(s)) ===")
+    s1, s2, s3, unrecognized = _clean_and_concat(file_paths, log_list)
+
+    conn = get_connection()
+    registry = load_existing_registry(conn, log_list)
+    conn.close()
+
+    proposals = []
+
+    def _propose_row(full_name, phone, email, city, source_system, source_label, row_index):
+        proposal = registry.propose(full_name, phone, email, city, source_system)
+        registry.provisional_apply(proposal, full_name, phone, email, city, source_system)
+        candidates = [
+            {"person_id": pid,
+             "full_name": registry.people[pid]["full_name"],
+             "phone": registry.people[pid]["phone"],
+             "email": registry.people[pid]["email"],
+             "city": registry.people[pid]["city"]}
+            for pid in proposal["candidates"]
+        ]
+        proposals.append({
+            "row_index": row_index,
+            "source": source_label,
+            "source_system": source_system,
+            "full_name": norm.display_name(full_name),
+            "phone": phone,
+            "email": email,
+            "city": city,
+            "action": proposal["action"],
+            "reason": proposal.get("reason"),
+            "candidates": candidates,
+            "default": proposal["default"],
+        })
+
+    row_index = 0
+    for _, r in s1.iterrows():
+        _propose_row(r["Full Name"], r["phone_norm"], r["email_norm"], r["city_norm"],
+                     "naukri", "source1", row_index)
+        row_index += 1
+    for _, r in s2.iterrows():
+        _propose_row(r["worker_name"], None, r["email_norm"], r["location_norm"],
+                     "gig_workers", "source2", row_index)
+        row_index += 1
+    for _, r in s3.iterrows():
+        _propose_row(r["Name"], r["phone_norm"], None, r["city_norm"],
+                     "cbnexus", "source3", row_index)
+        row_index += 1
+
+    n_auto = sum(1 for p in proposals if p["action"] == "auto_match")
+    n_review = sum(1 for p in proposals if p["action"] == "needs_review")
+    n_new = sum(1 for p in proposals if p["action"] == "create_new")
+    log(f"=== analyze_upload done: {len(proposals)} row(s) -- {n_auto} auto-match, "
+        f"{n_review} need review, {n_new} create-new ===")
+
+    return {
+        "proposals": proposals,
+        "s1": s1, "s2": s2, "s3": s3,
+        "unrecognized_files": unrecognized,
+        "log": log_list,
+        "n_auto_match": n_auto,
+        "n_needs_review": n_review,
+        "n_create_new": n_new,
+    }
+
+
+def confirm_upload(analysis, resolutions):
+    """resolutions: {row_index: person_id_or_None} for needs_review rows
+    only (None means "Create as New Person"; auto_match/create_new rows
+    are applied exactly as analyzed, no entry needed). Writes persons +
+    detail tables + match_flags and returns the same kind of summary
+    dict run_merge() does."""
+    log_list = []
+
+    def log(msg):
+        log_list.append(msg)
+        print(msg)
+
+    log("=== confirm_upload starting ===")
+
+    conn = get_connection()
+    registry = load_existing_registry(conn, log_list)
+    existing_ids = set(registry.people.keys())
+
+    def _resolve(p):
+        if p["action"] == "needs_review":
+            chosen = resolutions.get(p["row_index"], p["default"])
+        else:  # auto_match or create_new -- no human decision involved
+            chosen = p["default"]
+        args = (p["full_name"], p["phone"], p["email"], p["city"], p["source_system"])
+        if chosen is not None:
+            registry._apply_to_existing(chosen, *args)
+            return chosen
+        registry.stats["new"] += 1
+        return registry._create(*args)
+
+    proposals_by_source = {"source1": [], "source2": [], "source3": []}
+    for p in analysis["proposals"]:
+        proposals_by_source[p["source"]].append(p)
+
+    s1, s2, s3 = analysis["s1"], analysis["s2"], analysis["s3"]
+    applicant_rows, gig_rows, cbnexus_rows = [], [], []
+
+    for (_, r), p in zip(s1.iterrows(), proposals_by_source["source1"]):
+        pid = _resolve(p)
+        applicant_rows.append({
+            "person_id": pid,
+            "experience_years": float(r["Experience (Years)"]) if r["Experience (Years)"] else None,
+            "ctc_raw": r["Current CTC"],
+            "ctc_annual_inr": r["ctc_annual_inr"],
+            "ctc_was_lakhs": r["ctc_was_lakhs"],
+            "applied_date_raw": r["Applied Date"],
+            "applied_date": r["applied_date_norm"],
+            "skills_raw": r["Skills"],
+            "city_raw": r["City"],
+        })
+    for (_, r), p in zip(s2.iterrows(), proposals_by_source["source2"]):
+        pid = _resolve(p)
+        gig_rows.append({
+            "person_id": pid,
+            "rate_raw": r["rate"],
+            "rate_inr_per_hour": r["rate_inr_per_hour"],
+            "status": r["status_norm"],
+            "skills_raw": r["skill_tags"],
+            "location_raw": r["location"],
+        })
+    for (_, r), p in zip(s3.iterrows(), proposals_by_source["source3"]):
+        pid = _resolve(p)
+        cbnexus_rows.append({
+            "person_id": pid,
+            "verified": r["verified_norm"],
+            "verified_raw": r["Verified"],
+            "projects_completed": (int(r["projects_completed_norm"])
+                                    if pd.notna(r["projects_completed_norm"]) else None),
+            "city_raw": r["City"],
+        })
+
+    same_name_flags = registry.detect_same_name_conflicts()
+    for name, pids, details in same_name_flags:
+        log(f"[match] AMBIGUOUS: name '{name}' shared by {len(pids)} distinct "
+            f"unmerged person records with no common phone/email to confirm "
+            f"they're the same person -- kept separate. {details}")
+
+    cur = conn.cursor()
+
+    for pid, p in sorted(registry.people.items()):
+        if pid in existing_ids:
+            cur.execute(
+                "UPDATE persons SET full_name=%s, email=%s, phone=%s, "
+                "city=%s, source_systems=%s WHERE person_id=%s",
+                (p["full_name"], p["email"], p["phone"], p["city"],
+                 ",".join(sorted(p["source_systems"])), pid),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO persons (person_id, full_name, email, phone, "
+                "city, source_systems) VALUES (%s, %s, %s, %s, %s, %s)",
+                (p["person_id"], p["full_name"], p["email"], p["phone"],
+                 p["city"], ",".join(sorted(p["source_systems"]))),
+            )
+
+    def already_covered(table):
+        with conn.cursor() as c:
+            c.execute(f"SELECT DISTINCT person_id FROM {table}")
+            return {row["person_id"] for row in c.fetchall()}
+
+    covered_applicant = already_covered("applicant_details")
+    covered_gig = already_covered("gig_worker_details")
+    covered_cbnexus = already_covered("cbnexus_contacts")
+    applicant_rows = [r for r in applicant_rows if r["person_id"] not in covered_applicant]
+    gig_rows = [r for r in gig_rows if r["person_id"] not in covered_gig]
+    cbnexus_rows = [r for r in cbnexus_rows if r["person_id"] not in covered_cbnexus]
+
+    if applicant_rows:
+        cur.executemany(
+            "INSERT INTO applicant_details (person_id, experience_years, ctc_raw, "
+            "ctc_annual_inr, ctc_was_lakhs, applied_date_raw, applied_date, "
+            "skills_raw, city_raw) VALUES (%(person_id)s, %(experience_years)s, "
+            "%(ctc_raw)s, %(ctc_annual_inr)s, %(ctc_was_lakhs)s, %(applied_date_raw)s, "
+            "%(applied_date)s, %(skills_raw)s, %(city_raw)s)",
+            applicant_rows,
+        )
+    if gig_rows:
+        cur.executemany(
+            "INSERT INTO gig_worker_details (person_id, rate_raw, rate_inr_per_hour, "
+            "status, skills_raw, location_raw) VALUES (%(person_id)s, %(rate_raw)s, "
+            "%(rate_inr_per_hour)s, %(status)s, %(skills_raw)s, %(location_raw)s)",
+            gig_rows,
+        )
+    if cbnexus_rows:
+        cur.executemany(
+            "INSERT INTO cbnexus_contacts (person_id, verified, verified_raw, "
+            "projects_completed, city_raw) VALUES (%(person_id)s, %(verified)s, "
+            "%(verified_raw)s, %(projects_completed)s, %(city_raw)s)",
+            cbnexus_rows,
+        )
+
+    touched_ids = {r["person_id"] for r in applicant_rows} | \
+                  {r["person_id"] for r in gig_rows} | \
+                  {r["person_id"] for r in cbnexus_rows} | \
+                  (set(registry.people.keys()) - existing_ids)
+    with conn.cursor() as c:
+        c.execute("SELECT person_ids, description FROM match_flags")
+        flag_rows = c.fetchall()
+        already_flagged = {row["person_ids"] for row in flag_rows}
+        already_flagged_desc = {row["description"] for row in flag_rows}
+    for name, pids, details in same_name_flags:
+        key = ",".join(str(p) for p in pids)
+        if key in already_flagged or not (set(pids) & touched_ids):
+            continue
+        cur.execute(
+            "INSERT INTO match_flags (issue_type, description, person_ids, "
+            "source_file) VALUES (%s, %s, %s, %s)",
+            ("ambiguous_same_name",
+             f"'{name}' shared by {len(pids)} unmerged records with no common "
+             f"phone/email: " + "; ".join(details),
+             key, "uploaded_files"),
+        )
+    for cf in registry.field_conflicts:
+        if cf["description"] in already_flagged_desc:
+            continue
+        cur.execute(
+            "INSERT INTO match_flags (issue_type, description, person_ids, "
+            "source_file) VALUES (%s, %s, %s, %s)",
+            (cf["issue_type"], cf["description"],
+             ",".join(str(p) for p in cf["person_ids"]), "uploaded_files"),
+        )
+
+    conn.commit()
+
+    n_people = len(registry.people)
+    with conn.cursor() as c:
+        c.execute("SELECT COUNT(*) c FROM match_flags")
+        total_flags = c.fetchone()["c"]
+    conn.close()
+
+    log(f"=== confirm_upload done: {n_people} total people in DB ===")
+
+    return {
+        "total_people": n_people,
+        "new_people": registry.stats["new"],
+        "enriched_people": registry.stats["enriched"],
+        "unchanged_matches": registry.stats["unchanged"],
+        "conflicts_flagged": registry.stats["conflict"],
+        "total_ambiguous_flags": total_flags,
+        "unrecognized_files": analysis.get("unrecognized_files", []),
+        "log": log_list,
+    }
 
 
 # ---------------------------------------------------------------------
