@@ -1,8 +1,9 @@
-"""ConsultBae Ops Console -- entry point.
+"""Nexora -- entry point.
 
-Loads .env, gates the app behind a single-admin login, then hands off to
-one of 5 pages via st.navigation. Each page is self-contained in
-app/page_modules/ and manages its own MySQL connection.
+Loads .env, gates the app behind login/signup (see app/auth.py), then
+hands off to one of the pages via st.navigation. Each page is
+self-contained in app/page_modules/ and manages its own MySQL
+connection.
 
 Run with:  streamlit run app/streamlit_app.py
 """
@@ -21,7 +22,7 @@ import streamlit as st
 from app import auth
 from app.theme import inject_css, render_sidebar_brand, render_scroll_to_top, APP_NAME
 from app.page_modules import merge_page, automation_page, voice_page, quality_page, scale_page
-from common.db import get_connection, init_schema
+from common.db import ensure_users_table, get_connection, init_schema, seed_admin_user
 
 st.set_page_config(page_title=APP_NAME, layout="wide", initial_sidebar_state="expanded")
 
@@ -36,8 +37,10 @@ def ensure_db():
             cur.execute("SELECT 1 FROM persons LIMIT 1")
     except Exception:
         init_schema(conn)
-    finally:
-        conn.close()
+    ensure_users_table(conn)
+    seed_admin_user(conn, os.environ.get("ADMIN_USERNAME", "admin"),
+                     os.environ.get("ADMIN_PASSWORD", "consultbae2026"))
+    conn.close()
 
 
 ensure_db()
