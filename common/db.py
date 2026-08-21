@@ -9,10 +9,12 @@ the local MySQL instance used during development was set up.
 """
 import os
 import re
+import threading
 from typing import TYPE_CHECKING, List, Optional
 
 import pymysql
 import pymysql.cursors
+from dbutils.pooled_db import PooledDB
 from pymysql.connections import Connection
 from werkzeug.security import generate_password_hash
 
@@ -44,16 +46,50 @@ else:
     DictConnection = Connection
 
 
+_pool: Optional[PooledDB] = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool() -> PooledDB:
+    """Lazily creates the process-wide connection pool on first use (not
+    at import time -- importing this module, or anything that imports it,
+    must not require a live DB, since pure-logic unit tests import
+    pipeline.merge without ever calling get_connection()). The lock
+    guards the one-time creation against Streamlit's concurrent request
+    threads racing to initialize it simultaneously; every call after the
+    first just reads the already-set global."""
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:  # re-check: another thread may have won the race
+                _pool = PooledDB(
+                    creator=pymysql,
+                    mincached=1,
+                    maxcached=5,
+                    maxconnections=20,
+                    blocking=True,
+                    ping=1,  # verify the connection is alive when checked out of the pool
+                    host=MYSQL_HOST,
+                    port=MYSQL_PORT,
+                    user=MYSQL_USER,
+                    password=MYSQL_PASSWORD,
+                    database=MYSQL_DATABASE,
+                    cursorclass=pymysql.cursors.DictCursor,
+                    autocommit=False,
+                )
+    return _pool
+
+
 def get_connection() -> DictConnection:
-    return DictConnection(
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD,
-        database=MYSQL_DATABASE,
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False,
-    )
+    """Returns a connection checked out from the process-wide pool rather
+    than opening a brand-new MySQL connection every call -- previously,
+    every page render / every script run paid the cost of a fresh TCP +
+    auth handshake, and each one held its own slot against MySQL's
+    max_connections ceiling for its whole lifetime. Every existing call
+    site already does conn.close() when done (directly or via a `with`
+    block); that now returns the connection to the pool instead of
+    actually closing the socket, so no caller needed to change."""
+    return _get_pool().connection()
 
 
 def _split_statements(sql_text: str) -> List[str]:
