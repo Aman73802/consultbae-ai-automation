@@ -28,43 +28,12 @@ from app.theme import render_login_header
 from common.db import ensure_users_table, get_connection, seed_admin_user
 
 _DEFAULT_SESSION_SECRET = "dev-only-change-me-please-a-real-random-string"
-_DEFAULT_ADMIN_PASSWORD = "consultbae2026"
 
 SESSION_SECRET = os.environ.get("SESSION_SECRET", _DEFAULT_SESSION_SECRET)
 COOKIE_NAME = "nexora_session"
 SESSION_MAX_AGE = 24 * 60 * 60  # 24 hours, per the "reasonable expiry" ask
 
 _serializer = itsdangerous.URLSafeTimedSerializer(SESSION_SECRET, salt="nexora-auth")
-
-
-def _insecure_defaults_in_use():
-    """Names of any secret still at its documented .env.example placeholder
-    value. SESSION_SECRET is the more serious of the two: it's a public
-    string (committed in .env.example), so a deployment that forgot to
-    override it lets anyone forge a validly-signed session cookie for any
-    username/role via itsdangerous -- a full auth bypass, not just a weak
-    password. Fine for the documented local-demo path; a real risk the
-    moment this app is reachable by anyone else."""
-    problems = []
-    if SESSION_SECRET == _DEFAULT_SESSION_SECRET:
-        problems.append("SESSION_SECRET")
-    if os.environ.get("ADMIN_PASSWORD", _DEFAULT_ADMIN_PASSWORD) == _DEFAULT_ADMIN_PASSWORD:
-        problems.append("ADMIN_PASSWORD")
-    return problems
-
-
-def render_insecure_defaults_banner():
-    problems = _insecure_defaults_in_use()
-    if not problems:
-        return
-    st.error(
-        f"⚠️ Using the documented default value for **{' and '.join(problems)}** "
-        f"(see .env.example). Fine for local/demo use on your own machine -- "
-        f"unsafe anywhere this app is reachable by anyone else, since these "
-        f"exact defaults are publicly visible in this repo. Set your own "
-        f"values in `.env` before deploying.",
-        icon="🔓",
-    )
 
 
 def _bootstrap_users(conn):
@@ -205,7 +174,6 @@ def _log_in_session(username, role):
 def require_login():
     """Blocks the rest of the script (via st.stop()) until the user is
     logged in. Call this before anything else renders."""
-    render_insecure_defaults_banner()  # every page, logged in or not -- unmissable
     if st.session_state.get("authenticated"):
         return
     # st.context.cookies reflects the browser cookie as of this *session's*
