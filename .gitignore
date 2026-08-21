@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# local secrets/config -- see .env.example for the template
+.env
+
 # local MySQL server binaries + data dir (see README "Setup" for how
 # this was set up on the dev machine) -- ~500MB, never committed
 .mysql-local/
