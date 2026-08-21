@@ -279,12 +279,18 @@ button[kind^="primary"]:hover, a[kind^="primary"]:hover {
 [data-testid="stNumberInput"] input {
     background: var(--cb-panel) !important;
     border: 1px solid var(--cb-line) !important;
+    border-radius: 8px !important;
+    padding: 0.65rem 0.85rem !important;
+    font-size: 0.92rem !important;
     color: var(--cb-text) !important;
-    transition: border-color 0.2s var(--cb-ease);
+    transition: border-color 0.2s var(--cb-ease), box-shadow 0.2s var(--cb-ease);
 }
 [data-testid="stTextInput"] input:focus, [data-testid="stTextArea"] textarea:focus {
-    border-color: var(--cb-line-strong) !important;
+    border-color: var(--cb-text) !important;
+    box-shadow: 0 0 0 3px rgba(237, 237, 234, 0.12) !important;
+    outline: none !important;
 }
+[data-testid="stTextInput"] input::placeholder { color: var(--cb-text-faint) !important; }
 [data-testid="stExpander"] {
     border: 1px solid var(--cb-line) !important;
     background: var(--cb-panel) !important;
@@ -371,8 +377,22 @@ hr { border-top: 1px solid var(--cb-line) !important; opacity: 1 !important; }
 [data-testid="stForm"] {
     background: var(--cb-panel) !important;
     border: 1px solid var(--cb-line) !important;
-    padding: 1.75rem !important;
+    border-radius: 12px !important;
+    padding: 2rem !important;
     text-align: left;
+}
+.cb-login-wrap ~ div[data-testid="stVerticalBlock"] [data-testid="stTabs"] {
+    max-width: 420px;
+    margin: 0 auto;
+}
+.cb-login-wrap ~ div [data-testid="stTabs"] button[role="tab"] {
+    font-size: 0.88rem !important;
+    padding: 0.6rem 0.2rem !important;
+}
+.cb-login-wrap ~ div [data-testid="stForm"] [data-testid="stWidgetLabel"] p {
+    font-size: 0.82rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em;
 }
 
 /* ---------- scroll-to-top ---------- */
