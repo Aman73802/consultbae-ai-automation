@@ -27,12 +27,44 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from app.theme import render_login_header
 from common.db import ensure_users_table, get_connection, seed_admin_user
 
-SESSION_SECRET = os.environ.get(
-    "SESSION_SECRET", "dev-only-change-me-please-a-real-random-string")
+_DEFAULT_SESSION_SECRET = "dev-only-change-me-please-a-real-random-string"
+_DEFAULT_ADMIN_PASSWORD = "consultbae2026"
+
+SESSION_SECRET = os.environ.get("SESSION_SECRET", _DEFAULT_SESSION_SECRET)
 COOKIE_NAME = "nexora_session"
 SESSION_MAX_AGE = 24 * 60 * 60  # 24 hours, per the "reasonable expiry" ask
 
 _serializer = itsdangerous.URLSafeTimedSerializer(SESSION_SECRET, salt="nexora-auth")
+
+
+def _insecure_defaults_in_use():
+    """Names of any secret still at its documented .env.example placeholder
+    value. SESSION_SECRET is the more serious of the two: it's a public
+    string (committed in .env.example), so a deployment that forgot to
+    override it lets anyone forge a validly-signed session cookie for any
+    username/role via itsdangerous -- a full auth bypass, not just a weak
+    password. Fine for the documented local-demo path; a real risk the
+    moment this app is reachable by anyone else."""
+    problems = []
+    if SESSION_SECRET == _DEFAULT_SESSION_SECRET:
+        problems.append("SESSION_SECRET")
+    if os.environ.get("ADMIN_PASSWORD", _DEFAULT_ADMIN_PASSWORD) == _DEFAULT_ADMIN_PASSWORD:
+        problems.append("ADMIN_PASSWORD")
+    return problems
+
+
+def render_insecure_defaults_banner():
+    problems = _insecure_defaults_in_use()
+    if not problems:
+        return
+    st.error(
+        f"⚠️ Using the documented default value for **{' and '.join(problems)}** "
+        f"(see .env.example). Fine for local/demo use on your own machine -- "
+        f"unsafe anywhere this app is reachable by anyone else, since these "
+        f"exact defaults are publicly visible in this repo. Set your own "
+        f"values in `.env` before deploying.",
+        icon="🔓",
+    )
 
 
 def _bootstrap_users(conn):
@@ -77,20 +109,64 @@ def _restore_from_cookie():
     return True
 
 
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+
+
 def _check_login(username, password):
-    """Returns the user's role on success, None on failure."""
+    """Returns (role, error_message): role is set on success (error_message
+    None); on failure role is None and error_message explains why (either
+    a generic "incorrect" message, or a lockout message with the wait
+    time). Every failed attempt against a real username increments
+    failed_attempts; MAX_FAILED_ATTEMPTS in a row locks that account for
+    LOCKOUT_MINUTES -- closes the unlimited-password-guessing gap that
+    existed here before (no counter, no delay, no lockout at all)."""
     conn = get_connection()
     try:
         _bootstrap_users(conn)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT password_hash, role FROM users WHERE username=%s", (username,))
+                "SELECT password_hash, role, failed_attempts, "
+                "(locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked, "
+                "TIMESTAMPDIFF(SECOND, NOW(), locked_until) AS locked_seconds_left "
+                "FROM users WHERE username=%s",
+                (username,),
+            )
             row = cur.fetchone()
+
+            if row and row["is_locked"]:
+                minutes_left = max(1, (row["locked_seconds_left"] or 0) // 60 + 1)
+                return None, (
+                    f"Too many failed attempts. Try again in about "
+                    f"{minutes_left} minute(s)."
+                )
+
+            if not row or not check_password_hash(row["password_hash"], password):
+                if row:
+                    attempts = row["failed_attempts"] + 1
+                    if attempts >= MAX_FAILED_ATTEMPTS:
+                        cur.execute(
+                            "UPDATE users SET failed_attempts=%s, "
+                            "locked_until=DATE_ADD(NOW(), INTERVAL %s MINUTE) "
+                            "WHERE username=%s",
+                            (attempts, LOCKOUT_MINUTES, username),
+                        )
+                    else:
+                        cur.execute(
+                            "UPDATE users SET failed_attempts=%s WHERE username=%s",
+                            (attempts, username),
+                        )
+                    conn.commit()
+                return None, "Incorrect username or password."
+
+            cur.execute(
+                "UPDATE users SET failed_attempts=0, locked_until=NULL WHERE username=%s",
+                (username,),
+            )
+        conn.commit()
     finally:
         conn.close()
-    if not row or not check_password_hash(row["password_hash"], password):
-        return None
-    return row["role"]
+    return row["role"], None
 
 
 def _create_account(username, password):
@@ -129,6 +205,7 @@ def _log_in_session(username, role):
 def require_login():
     """Blocks the rest of the script (via st.stop()) until the user is
     logged in. Call this before anything else renders."""
+    render_insecure_defaults_banner()  # every page, logged in or not -- unmissable
     if st.session_state.get("authenticated"):
         return
     # st.context.cookies reflects the browser cookie as of this *session's*
@@ -151,12 +228,12 @@ def require_login():
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
         if submitted:
-            role = _check_login(username, password)
+            role, error = _check_login(username, password)
             if role:
                 _log_in_session(username, role)
                 st.rerun()
             else:
-                st.error("Incorrect username or password.")
+                st.error(error)
 
     with tab_signup:
         with st.form("signup_form"):

@@ -70,6 +70,21 @@ def init_schema(conn=None):
 # CREATE TABLE IF NOT EXISTS instead, called once at app startup.
 # ---------------------------------------------------------------------
 
+def _ensure_column(conn, table, column, ddl):
+    """Adds `column` to `table` if it's missing. Checked via SHOW COLUMNS
+    rather than MySQL's `ADD COLUMN IF NOT EXISTS` (only available on
+    MySQL 8.0.29+) so this works on any MySQL version, matching the
+    SHOW-TABLES-then-CREATE pattern already used elsewhere in this file.
+    No migrations tool exists yet (see README) -- this is the same
+    additive, idempotent-bootstrap approach as ensure_users_table itself,
+    just at column granularity."""
+    with conn.cursor() as cur:
+        cur.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (column,))
+        if cur.fetchone() is None:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+    conn.commit()
+
+
 def ensure_users_table(conn):
     with conn.cursor() as cur:
         cur.execute(
@@ -82,6 +97,13 @@ def ensure_users_table(conn):
             ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         )
     conn.commit()
+    # Login-lockout bookkeeping (see auth.py::_check_login), added after
+    # the table already existed for some installs -- bolted on via
+    # _ensure_column rather than baked into the CREATE TABLE above so
+    # existing users tables pick it up automatically on next startup.
+    _ensure_column(conn, "users", "failed_attempts",
+                    "failed_attempts INT NOT NULL DEFAULT 0")
+    _ensure_column(conn, "users", "locked_until", "locked_until DATETIME NULL")
 
 
 def seed_admin_user(conn, username, password):
