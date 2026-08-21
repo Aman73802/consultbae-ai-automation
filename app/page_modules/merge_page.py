@@ -7,6 +7,7 @@ once the admin has resolved anything ambiguous). See
 pipeline/merge.py's analyze_upload()/confirm_upload() docstrings for
 how a row gets classified.
 """
+import logging
 import os
 import sys
 
@@ -18,6 +19,8 @@ from app import merge_export as me
 from app.theme import card, page_header
 from common.db import get_connection, list_person_tables, validate_person_table_name
 from pipeline.merge import analyze_upload, confirm_upload
+
+logger = logging.getLogger(__name__)
 
 _NEW_TABLE_OPTION = "+ Create a new table..."
 
@@ -119,6 +122,7 @@ def _render_review_step(conn, analysis):
             try:
                 result = confirm_upload(analysis, resolutions, target_table=target_table)
             except Exception as e:
+                logger.exception("confirm_upload failed (target_table=%r)", target_table)
                 st.error(f"Save failed: {e}")
                 return
         pending_ids = st.session_state.get("merge_analysis_pending_ids", [])
@@ -182,6 +186,7 @@ def _analyze_and_review_section(conn, upload_rows):
             try:
                 analysis = analyze_upload(paths, target_table=target_table)
             except Exception as e:
+                logger.exception("analyze_upload failed (target_table=%r)", target_table)
                 st.error(f"Analyze failed: {e}")
                 return
 

@@ -7,6 +7,7 @@ write (person + audio_submissions row) only happens after the operator
 reviews the extracted properties and explicitly clicks "Add to Database" --
 not automatically on submit.
 """
+import logging
 import os
 import sys
 import uuid
@@ -19,6 +20,8 @@ from app.audio_utils import extract_properties
 from app.theme import page_header
 from common import normalize as norm
 from common.db import get_connection
+
+logger = logging.getLogger(__name__)
 
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                           "data", "audio")
@@ -82,6 +85,7 @@ def _render_submit_tab(conn):
                 try:
                     props = extract_properties(file_path)
                 except Exception as e:
+                    logger.exception("extract_properties failed for %s", file_path)
                     st.error(f"Could not read that audio file: {e}")
                     return
             st.session_state["voice_pending"] = {

@@ -11,6 +11,7 @@ install.
 Run with:  python3 automation/api_server.py
 Then:      http://localhost:5001/api/people
 """
+import logging
 import os
 import sys
 
@@ -20,6 +21,7 @@ from flask import Flask, jsonify, request
 
 from common.db import DB_PATH, get_connection
 
+logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 ALLOWED_CATEGORIES = {"automation-heavy", "web dev", "data"}
@@ -65,6 +67,7 @@ def health():
         conn = get_connection()
         conn.close()
     except Exception:
+        logger.exception("Health check: DB connection failed")
         ok = False
     return jsonify({"status": "ok" if ok else "db unreachable", "db": DB_PATH})
 
@@ -130,6 +133,9 @@ def set_skill_category(person_id):
 
 
 if __name__ == "__main__":
+    from common.logging_config import setup_logging
+
+    setup_logging()
     try:
         get_connection().close()
     except Exception as e:

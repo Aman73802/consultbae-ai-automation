@@ -11,12 +11,16 @@ the host system -- this machine's Homebrew was in a broken/unwritable
 state, and requiring a working system ffmpeg install is one more thing
 that can go wrong when someone else clones this repo to run it.
 """
+import logging
+
 import static_ffmpeg
 
 static_ffmpeg.add_paths()
 
 from pydub import AudioSegment  # noqa: E402 -- must follow add_paths() above
 from pydub.utils import mediainfo  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 SILENCE_CHUNK_MS = 200
 SILENCE_THRESHOLD_DB = -40.0
@@ -52,7 +56,8 @@ def _bitrate_kbps(file_path, seg):
         if br:
             return round(int(br) / 1000.0, 1)
     except Exception:
-        pass
+        logger.debug("mediainfo() failed for %s, falling back to PCM estimate", file_path,
+                      exc_info=True)
     return round(seg.frame_rate * seg.sample_width * 8 * seg.channels / 1000.0, 1)
 
 

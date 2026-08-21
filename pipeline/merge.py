@@ -17,6 +17,7 @@ existing database (see run_merge's docstring for the fresh vs.
 incremental distinction).
 """
 import csv
+import logging
 import os
 import sys
 
@@ -26,6 +27,8 @@ import pandas as pd
 
 from common import normalize as norm
 from common.db import DB_PATH, get_connection, init_schema
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
@@ -72,7 +75,7 @@ def detect_source_type(path):
 def clean_source1(path, log_list):
     def log(msg):
         log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     df = pd.read_csv(path, dtype=str, keep_default_na=False)
     df = df[df["Full Name"].str.strip() != ""].copy()
@@ -137,7 +140,7 @@ def clean_source1(path, log_list):
 def clean_source2(path, log_list):
     def log(msg):
         log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     df = pd.read_csv(path, dtype=str, keep_default_na=False,
                       header=0, names=["email_id", "worker_name", "rate",
@@ -209,7 +212,7 @@ def clean_source2(path, log_list):
 def clean_source3(path, log_list):
     def log(msg):
         log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     df = pd.read_csv(path, dtype=str, keep_default_na=False)
 
@@ -269,7 +272,7 @@ class PersonRegistry:
 
     def _log(self, msg):
         self.log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     def resolve(self, phone, email):
         candidates = set()
@@ -523,7 +526,7 @@ def _clean_and_concat(file_paths, log_list):
     out so the two don't drift on how a file becomes a dataframe."""
     def log(msg):
         log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     s1_frames, s2_frames, s3_frames = [], [], []
     unrecognized = []
@@ -574,7 +577,7 @@ def analyze_upload(file_paths, target_table="persons"):
 
     def log(msg):
         log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     log(f"=== analyze_upload starting ({len(file_paths)} file(s), "
         f"target table={target_table!r}) ===")
@@ -666,7 +669,7 @@ def confirm_upload(analysis, resolutions, target_table="persons"):
 
     def log(msg):
         log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     log(f"=== confirm_upload starting (target table={target_table!r}) ===")
 
@@ -878,7 +881,7 @@ def run_merge(file_paths, fresh=False):
 
     def log(msg):
         log_list.append(msg)
-        print(msg)
+        logger.info(msg)
 
     log(f"=== run_merge starting ({'fresh rebuild' if fresh else 'incremental'}) ===")
 
@@ -1188,4 +1191,7 @@ def main():
 
 
 if __name__ == "__main__":
+    from common.logging_config import setup_logging
+
+    setup_logging()
     main()

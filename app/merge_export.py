@@ -4,6 +4,7 @@ page module itself so the export logic is easy to find and reuse.
 """
 import csv
 import io
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -12,6 +13,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import landscape, letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
+
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "data", "uploads")
@@ -32,6 +35,7 @@ def save_upload(conn, uploaded_file):
         with open(stored_path, newline="") as f:
             row_count = max(sum(1 for _ in csv.reader(f)) - 1, 0)  # minus header
     except Exception:
+        logger.warning("Could not count rows in uploaded file %s", stored_path, exc_info=True)
         row_count = None
 
     with conn.cursor() as cur:

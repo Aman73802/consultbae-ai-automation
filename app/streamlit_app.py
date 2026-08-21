@@ -17,6 +17,10 @@ from dotenv import load_dotenv
 load_dotenv()  # must happen before common.db (or anything importing it)
                # is imported anywhere, since it reads MYSQL_* at import time
 
+from common.logging_config import setup_logging  # noqa: E402
+
+setup_logging()
+
 import streamlit as st  # noqa: E402 -- all imports below must follow load_dotenv() above
 
 from app import auth  # noqa: E402
