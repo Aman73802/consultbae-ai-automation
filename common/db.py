@@ -12,6 +12,7 @@ import re
 
 import pymysql
 import pymysql.cursors
+from werkzeug.security import generate_password_hash
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA_PATH = os.path.join(REPO_ROOT, "db", "schema.sql")
@@ -59,3 +60,73 @@ def init_schema(conn=None):
     conn.commit()
     if own_conn:
         conn.close()
+
+
+# ---------------------------------------------------------------------
+# users -- deliberately NOT part of db/schema.sql's destructive rebuild
+# cycle (init_schema() above drops and recreates everything it manages).
+# Login accounts must survive both a CLI `fresh=True` rebuild and the
+# Danger Zone data reset, so they're bootstrapped here via an idempotent
+# CREATE TABLE IF NOT EXISTS instead, called once at app startup.
+# ---------------------------------------------------------------------
+
+def ensure_users_table(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS users ("
+            "id INT AUTO_INCREMENT PRIMARY KEY, "
+            "username VARCHAR(100) NOT NULL UNIQUE, "
+            "password_hash VARCHAR(255) NOT NULL, "
+            "role VARCHAR(20) NOT NULL DEFAULT 'user', "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        )
+    conn.commit()
+
+
+def seed_admin_user(conn, username, password):
+    """Inserts one role='admin' row from the given credentials, but only
+    if the users table is completely empty -- so this is safe to call on
+    every app startup without ever overwriting a real account (including
+    one an admin later renamed/re-passworded through normal use)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) c FROM users")
+        if cur.fetchone()["c"] > 0:
+            return
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, 'admin')",
+            (username, generate_password_hash(password, method="pbkdf2:sha256")),
+        )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------
+# Danger Zone reset -- single source of truth for what gets wiped, used
+# by both the Settings page and scripts/reset_data.py so the UI and the
+# CLI can't drift apart. Never touches `users` (see ensure_users_table
+# above for why login accounts need to survive this).
+# ---------------------------------------------------------------------
+
+RESET_TABLES = (
+    "applicant_details",
+    "gig_worker_details",
+    "cbnexus_contacts",
+    "audio_submissions",
+    "match_flags",
+    "uploaded_files",
+    "persons",
+)
+
+
+def reset_data(conn):
+    """Truncates every data table (people + their source-specific detail
+    rows, match flags, upload records, audio submissions) so the app
+    starts from a completely empty dataset. FK checks are disabled for
+    the duration, same pattern db/schema.sql itself uses, since the
+    detail tables reference persons.person_id."""
+    with conn.cursor() as cur:
+        cur.execute("SET FOREIGN_KEY_CHECKS = 0")
+        for table in RESET_TABLES:
+            cur.execute(f"TRUNCATE TABLE {table}")
+        cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+    conn.commit()
