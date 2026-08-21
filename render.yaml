@@ -4,7 +4,7 @@
 #
 # What this does NOT provision (both need a separate free account,
 # Render doesn't offer either):
-#   - MySQL (app data)      -> PlanetScale free tier
+#   - MySQL (app data)      -> TiDB Cloud Starter free tier
 #   - Postgres (n8n's own workflow/credential storage) -> Neon free tier
 # See DEPLOYMENT.md for the full step-by-step, including exactly which
 # values go into the "sync: false" secrets below (Render will prompt for

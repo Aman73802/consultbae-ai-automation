@@ -26,7 +26,7 @@ render.yaml                 Render Blueprint for a free-tier cloud deploy (see D
 ```
 
 **Deploying this somewhere other than your own machine?** See
-[DEPLOYMENT.md](DEPLOYMENT.md) — a free-tier setup (Render + PlanetScale
+[DEPLOYMENT.md](DEPLOYMENT.md) — a free-tier setup (Render + TiDB Cloud
 + Neon + Groq) with no server bills.
 
 ## Setup

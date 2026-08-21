@@ -27,7 +27,7 @@ MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
 MYSQL_USER = os.environ.get("MYSQL_USER", "consultbae")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "consultbae_dev_pw")
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "consultbae")
-# Hosted MySQL providers (e.g. PlanetScale) require TLS and reject plain
+# Hosted MySQL providers (e.g. TiDB Cloud) require TLS and reject plain
 # connections outright -- local dev (db/start_mysql.sh) doesn't speak TLS
 # at all, so this defaults off and only turns on when explicitly asked.
 MYSQL_SSL = os.environ.get("MYSQL_SSL", "false").strip().lower() in ("1", "true", "yes")
@@ -71,7 +71,7 @@ def _get_pool() -> PooledDB:
                 if MYSQL_SSL:
                     # ssl.create_default_context() verifies against the
                     # system's trusted CA bundle -- correct for a host like
-                    # PlanetScale whose certificate is publicly trusted, no
+                    # TiDB Cloud whose certificate is publicly trusted, no
                     # need to ship/pin a specific CA file for that case.
                     extra["ssl"] = ssl.create_default_context()
                 _pool = PooledDB(
