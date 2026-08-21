@@ -16,8 +16,10 @@ import streamlit as st
 
 from app import merge_export as me
 from app.theme import page_header, card
-from common.db import get_connection
-from pipeline.merge import analyze_upload, confirm_upload, SEED_PATHS
+from common.db import get_connection, list_person_tables, validate_person_table_name
+from pipeline.merge import analyze_upload, confirm_upload
+
+_NEW_TABLE_OPTION = "+ Create a new table..."
 
 
 def _render_merge_summary(result):
@@ -25,13 +27,22 @@ def _render_merge_summary(result):
     shown once, right after Confirm & Save, so it's clear the total
     count moving by (say) 2 after uploading a 12-row file isn't a bug:
     10 of those rows matched people already in the database."""
+    target_table = result.get("target_table", "persons")
+    into = (f"the `{target_table}` table" if target_table != "persons"
+            else "the database")
     st.success(
-        f"Saved — {result['total_people']} people now in the database. "
+        f"Saved into {into} — {result['total_people']} people now in "
+        f"`{target_table}`. "
         f"**{result['new_people']}** new people added, "
         f"**{result['enriched_people']}** existing people enriched with new data, "
         f"**{result['unchanged_matches']}** row(s) matched with no new information, "
         f"**{result['conflicts_flagged']}** ambiguous/conflict case(s) flagged."
     )
+    if target_table != "persons":
+        st.caption("Detail fields (skills, experience, verified status, etc.) and "
+                   "conflict flags aren't saved for a custom table -- only the core "
+                   "name/phone/email/city/source fields, since those extras are "
+                   "specific to the `persons` schema.")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("New people", result["new_people"])
     c2.metric("Enriched", result["enriched_people"])
@@ -103,9 +114,10 @@ def _render_review_step(conn, analysis):
             "Confirm & Save to Database", type="primary", width="stretch")
 
     if confirm_clicked:
-        with st.spinner("Saving to the database..."):
+        target_table = st.session_state.get("merge_analysis_target_table", "persons")
+        with st.spinner(f"Saving to `{target_table}`..."):
             try:
-                result = confirm_upload(analysis, resolutions)
+                result = confirm_upload(analysis, resolutions, target_table=target_table)
             except Exception as e:
                 st.error(f"Save failed: {e}")
                 return
@@ -119,40 +131,56 @@ def _render_review_step(conn, analysis):
         st.session_state["last_merge_summary"] = result
         st.session_state.pop("merge_analysis", None)
         st.session_state.pop("merge_analysis_pending_ids", None)
+        st.session_state.pop("merge_analysis_target_table", None)
         st.rerun()
 
 
 def _analyze_and_review_section(conn, upload_rows):
     st.markdown("#### Analyze")
-    include_seed = st.checkbox(
-        "Also include the original 3 seed CSVs (source1/2/3 in data/)",
-        value=True,
-        help="On by default so the merge reflects the full known dataset "
-             "combined with your uploads. Re-processing the seed files is "
-             "safe -- they match back to the same existing people, "
-             "nothing duplicates.",
+
+    table_choice = st.selectbox(
+        "Destination table",
+        list_person_tables(conn) + [_NEW_TABLE_OPTION],
+        help="Matching (auto-match / needs-review) runs against whichever table "
+             "you pick here, so people already saved in a different table won't "
+             "show up as candidates. Defaults to `persons`, the main shared pool.",
     )
+    target_table = table_choice
+    if table_choice == _NEW_TABLE_OPTION:
+        new_table_name = st.text_input(
+            "New table name",
+            placeholder="e.g. q1_2026_leads",
+            help="Lowercase letters, numbers, and underscores only. Created with "
+                 "the same core columns as persons (name/phone/email/city/source) "
+                 "-- no per-source detail tables or conflict flags for a new "
+                 "table, those are specific to persons.",
+        )
+        target_table = new_table_name.strip().lower()
 
     pending = [r for r in upload_rows if r["status"] == "pending"]
-    st.caption(f"{len(pending)} pending upload(s) will be analyzed"
-               + (" + the 3 seed CSVs." if include_seed else "."))
+    st.caption(f"{len(pending)} pending upload(s) will be analyzed.")
 
-    if st.button("Analyze", type="primary", disabled=not (pending or include_seed)):
+    if st.button("Analyze", type="primary", disabled=not pending):
+        if table_choice == _NEW_TABLE_OPTION:
+            try:
+                validate_person_table_name(target_table)
+            except ValueError as e:
+                st.error(str(e))
+                return
+
         with conn.cursor() as cur:
             cur.execute("SELECT id, stored_path FROM uploaded_files WHERE status='pending'")
             pending_rows = cur.fetchall()
         paths = [r["stored_path"] for r in pending_rows]
-        if include_seed:
-            paths = paths + SEED_PATHS
 
         if not paths:
-            st.warning("Nothing to analyze -- upload a file or check the seed-CSV box.")
+            st.warning("Nothing to analyze -- upload a file first.")
             return
 
         pending_ids = [r["id"] for r in pending_rows]
         with st.spinner(f"Analyzing {len(paths)} file(s)..."):
             try:
-                analysis = analyze_upload(paths)
+                analysis = analyze_upload(paths, target_table=target_table)
             except Exception as e:
                 st.error(f"Analyze failed: {e}")
                 return
@@ -166,6 +194,7 @@ def _analyze_and_review_section(conn, upload_rows):
 
         st.session_state["merge_analysis"] = analysis
         st.session_state["merge_analysis_pending_ids"] = pending_ids
+        st.session_state["merge_analysis_target_table"] = target_table
         st.session_state.pop("last_merge_summary", None)
         st.rerun()
 
@@ -197,6 +226,7 @@ def render():
                 # force a fresh Analyze before Confirm & Save is offered again.
                 st.session_state.pop("merge_analysis", None)
                 st.session_state.pop("merge_analysis_pending_ids", None)
+                st.session_state.pop("merge_analysis_target_table", None)
                 st.success(f"Saved {len(new_ones)} new file(s).")
                 st.rerun()
 
@@ -220,9 +250,19 @@ def render():
         st.divider()
         st.markdown("#### Current merged database")
         df = me.fetch_people_df(conn)
-        st.caption(f"{len(df)} people currently in the `persons` table "
-                   f"(written directly by Confirm & Save above -- this is the live state).")
+        st.caption(f"{len(df)} people currently in the `persons` table -- the main "
+                   f"shared pool (written directly by Confirm & Save above when "
+                   f"`persons` is the selected destination -- this is the live state).")
         st.dataframe(df, width="stretch", hide_index=True)
+
+        other_tables = [t for t in list_person_tables(conn) if t != "persons"]
+        if other_tables:
+            with st.expander(f"Other destination tables ({len(other_tables)})"):
+                for t in other_tables:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SELECT COUNT(*) c FROM {t}")
+                        count = cur.fetchone()["c"]
+                    st.write(f"**{t}** — {count} people")
 
         st.markdown("#### Export")
         c1, c2, c3, c4 = st.columns(4)
