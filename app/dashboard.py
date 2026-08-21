@@ -17,6 +17,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 README_PATH = os.path.join(REPO_ROOT, "README.md")
 API_BASE = "http://localhost:5001"
 N8N_BASE = "http://localhost:5678"
+OLLAMA_BASE = "http://localhost:11434"
 
 
 def read_readme_section(start_heading, end_heading):
@@ -48,6 +49,14 @@ def check_n8n_reachable():
         return r.status_code == 200
     except requests.exceptions.RequestException:
         return False
+
+
+def check_ollama_reachable():
+    try:
+        r = requests.get(f"{OLLAMA_BASE}/api/version", timeout=1.5)
+        return r.status_code == 200, r.json()
+    except requests.exceptions.RequestException as e:
+        return False, str(e)
 
 
 def get_stats(conn):
@@ -111,6 +120,8 @@ def page_overview(conn):
     status_line(api_ok, f"Supporting API: {'reachable at ' + API_BASE if api_ok else 'not running -- start it (see Task 2 tab)'}")
     n8n_ok = check_n8n_reachable()
     status_line(n8n_ok, f"n8n editor: {'reachable at ' + N8N_BASE if n8n_ok else 'not running -- see Task 2 tab'}")
+    ollama_ok, _ = check_ollama_reachable()
+    status_line(ollama_ok, f"Ollama (local LLM): {'reachable at ' + OLLAMA_BASE if ollama_ok else 'not running -- see Task 2 tab'}")
     if stats["tagged_count"] > 0:
         status_line(True, f"**{stats['tagged_count']}/{len(stats['taggable_people'])}** "
                             f"people tagged with a skill_category -- n8n automation has run")
@@ -172,7 +183,7 @@ def page_task1(conn):
 def page_task2(conn):
     st.title("Task 2 — n8n skill-tagging automation")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         api_ok, api_info = check_api_health()
         if api_ok:
@@ -194,14 +205,26 @@ def page_task2(conn):
                 f"exact `npx n8n start` steps, including a fix if your "
                 f"system Node is too new)."
             )
+    with col3:
+        ollama_ok, ollama_info = check_ollama_reachable()
+        if ollama_ok:
+            st.success(f"Ollama is running at {OLLAMA_BASE}")
+            st.json(ollama_info if isinstance(ollama_info, dict) else {"info": ollama_info})
+        else:
+            st.warning(
+                f"Ollama isn't reachable at {OLLAMA_BASE} -- the workflow's "
+                f"LLM node needs it. Start with `./.ollama-local/ollama serve` "
+                f"(see automation/README.md)."
+            )
 
     st.markdown(
         "**To run the actual automation:** this step has to happen in the "
         "n8n UI (per the assignment, a pure-code solution here scores zero). "
         "Full steps are in [automation/README.md](../automation/README.md):\n\n"
         "1. Start the API above if it isn't running.\n"
-        "2. Import `automation/skill_tagging_flow.json` into n8n.\n"
-        "3. Connect your OpenAI/Anthropic API key as a Header Auth credential.\n"
+        "2. Start Ollama (`./.ollama-local/ollama serve`) -- the workflow's "
+        "LLM node calls it locally, no API key needed.\n"
+        "3. Import `automation/skill_tagging_flow.json` into n8n.\n"
         "4. Click **Execute Workflow** in n8n.\n"
         "5. Come back here and hit **Refresh** below -- the table updates live."
     )

@@ -13,6 +13,9 @@ __pycache__/
 # local Node.js runtime (system Node was too new for n8n's native deps)
 .node-local/
 
+# local Ollama binary + pulled models (free local LLM for Task 2, no API key needed)
+.ollama-local/
+
 # audio files uploaded through the Task 3 app
 data/audio/*
 !data/audio/.gitkeep

@@ -83,8 +83,9 @@ properties.
 ## Run — Task 2 (n8n automation)
 
 See [automation/README.md](automation/README.md) for the full walkthrough
-(starting the local API, importing `automation/skill_tagging_flow.json`
-into n8n, connecting an API key, running it).
+(starting the local API and n8n itself, starting the local Ollama LLM
+the workflow calls, importing `automation/skill_tagging_flow.json` into
+n8n, running it).
 
 ---
 
