@@ -47,7 +47,7 @@ def index():
     This root route just exists so hitting this port in a browser shows
     something useful instead of Flask's default 404."""
     return jsonify({
-        "what_is_this": "ConsultBae Task 2 supporting API (not n8n)",
+        "what_is_this": "Nexora Task 2 supporting API (not n8n)",
         "n8n_setup": "see automation/README.md -- n8n runs separately, "
                       "typically on http://localhost:5678",
         "endpoints": {

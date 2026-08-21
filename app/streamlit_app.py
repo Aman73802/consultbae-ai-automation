@@ -25,7 +25,8 @@ from app.page_modules import (merge_page, automation_page, voice_page, quality_p
                                scale_page, settings_page)
 from common.db import ensure_users_table, get_connection, init_schema, seed_admin_user
 
-st.set_page_config(page_title=APP_NAME, layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title=APP_NAME, page_icon="🔷", layout="wide",
+                    initial_sidebar_state="expanded")
 
 inject_css()
 auth.require_login()

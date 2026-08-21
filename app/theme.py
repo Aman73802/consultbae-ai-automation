@@ -22,8 +22,17 @@ about the ceiling.
 """
 import streamlit as st
 
-APP_NAME = "ConsultBae Ops Console"
+APP_NAME = "Nexora"
 APP_TAGLINE = "Unified people data, voice intake, and workflow automation."
+
+# Abstract geometric mark -- three offset squares converging on a
+# center point, drawn in the app's own off-white/near-black palette.
+# Inline SVG, no external image file.
+_LOGO_SVG = """<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="10" height="10" stroke="#ededea" stroke-width="1.4"/>
+    <rect x="9" y="9" width="10" height="10" fill="#ededea"/>
+    <rect x="1" y="9" width="10" height="10" stroke="#ededea" stroke-width="1.4" stroke-dasharray="2 2"/>
+</svg>"""
 
 _CSS = """
 <style>
@@ -421,7 +430,7 @@ def inject_css():
 def render_sidebar_brand():
     st.sidebar.markdown(
         f"""<div class="cb-brand">
-            <div class="cb-brand-mark">CB</div>
+            <div class="cb-brand-mark">{_LOGO_SVG}</div>
             <div class="cb-brand-text">
                 <p class="cb-brand-name">{APP_NAME}</p>
                 <div class="cb-brand-tagline">{APP_TAGLINE}</div>
@@ -435,7 +444,7 @@ def render_login_header():
     inject_css()
     st.markdown(
         f"""<div class="cb-login-wrap">
-            <div class="cb-login-mark">CB</div>
+            <div class="cb-login-mark">{_LOGO_SVG}</div>
             <div class="cb-login-name">{APP_NAME}</div>
             <div class="cb-login-tagline">{APP_TAGLINE}</div>
         </div>""",
