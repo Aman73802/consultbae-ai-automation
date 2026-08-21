@@ -22,7 +22,13 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    # enableCORS/enableXsrfProtection off: Streamlit's browser client opens a
+    # websocket back to the server, and behind a reverse proxy (Render's) both
+    # of those checks see the proxy's origin rather than the browser's and
+    # reject the upgrade -- the page then sits on its loading spinner forever
+    # with no error. Safe here: the app's own login gate is what protects it,
+    # not these two same-origin heuristics.
+    startCommand: streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
     envVars:
       - key: MYSQL_HOST
         sync: false
