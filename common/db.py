@@ -9,9 +9,11 @@ the local MySQL instance used during development was set up.
 """
 import os
 import re
+from typing import TYPE_CHECKING, List, Optional
 
 import pymysql
 import pymysql.cursors
+from pymysql.connections import Connection
 from werkzeug.security import generate_password_hash
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,9 +28,24 @@ MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "consultbae")
 # human-readable connection string, used only in log/health-check messages
 DB_PATH = f"mysql://{MYSQL_USER}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
 
+# get_connection() always sets cursorclass=DictCursor, so every cursor in
+# this codebase returns dict rows (fetchone()["col"], not fetchone()[0]) --
+# this alias makes that the type every function below actually gets, so
+# mypy can check dict-style row access instead of assuming plain tuples.
+# The pymysql-stubs package types Connection as Generic[_C], but the real
+# pymysql.connections.Connection at runtime is a plain, non-generic class
+# -- subscripting it (Connection[DictCursor]) works for mypy but raises
+# "'type' object is not subscriptable" if actually executed. TYPE_CHECKING
+# keeps the subscript in the type-checker's eyes only; at runtime
+# DictConnection is just Connection, unparameterized, exactly as before.
+if TYPE_CHECKING:
+    DictConnection = Connection[pymysql.cursors.DictCursor]
+else:
+    DictConnection = Connection
 
-def get_connection():
-    return pymysql.connect(
+
+def get_connection() -> DictConnection:
+    return DictConnection(
         host=MYSQL_HOST,
         port=MYSQL_PORT,
         user=MYSQL_USER,
@@ -39,18 +56,18 @@ def get_connection():
     )
 
 
-def _split_statements(sql_text):
+def _split_statements(sql_text: str) -> List[str]:
     # Our schema has no semicolons inside string literals or procedures,
     # so a plain split is safe and avoids pulling in a full SQL parser.
     statements = [s.strip() for s in sql_text.split(";")]
     return [s for s in statements if s and not re.fullmatch(r"--.*", s)]
 
 
-def init_schema(conn=None):
+def init_schema(conn: Optional[DictConnection] = None) -> None:
     """(Re)creates all tables from db/schema.sql. Destructive -- only
     called by the merge pipeline, which is the sole writer of source data."""
     own_conn = conn is None
-    if own_conn:
+    if conn is None:
         conn = get_connection()
     with open(SCHEMA_PATH) as f:
         statements = _split_statements(f.read())
@@ -70,7 +87,7 @@ def init_schema(conn=None):
 # CREATE TABLE IF NOT EXISTS instead, called once at app startup.
 # ---------------------------------------------------------------------
 
-def _ensure_column(conn, table, column, ddl):
+def _ensure_column(conn: DictConnection, table: str, column: str, ddl: str) -> None:
     """Adds `column` to `table` if it's missing. Checked via SHOW COLUMNS
     rather than MySQL's `ADD COLUMN IF NOT EXISTS` (only available on
     MySQL 8.0.29+) so this works on any MySQL version, matching the
@@ -85,7 +102,7 @@ def _ensure_column(conn, table, column, ddl):
     conn.commit()
 
 
-def ensure_users_table(conn):
+def ensure_users_table(conn: DictConnection) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "CREATE TABLE IF NOT EXISTS users ("
@@ -106,14 +123,16 @@ def ensure_users_table(conn):
     _ensure_column(conn, "users", "locked_until", "locked_until DATETIME NULL")
 
 
-def seed_admin_user(conn, username, password):
+def seed_admin_user(conn: DictConnection, username: str, password: str) -> None:
     """Inserts one role='admin' row from the given credentials, but only
     if the users table is completely empty -- so this is safe to call on
     every app startup without ever overwriting a real account (including
     one an admin later renamed/re-passworded through normal use)."""
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) c FROM users")
-        if cur.fetchone()["c"] > 0:
+        row = cur.fetchone()
+        assert row is not None  # SELECT COUNT(*) always returns exactly one row
+        if row["c"] > 0:
             return
         cur.execute(
             "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, 'admin')",
@@ -140,7 +159,7 @@ RESET_TABLES = (
 )
 
 
-def reset_data(conn):
+def reset_data(conn: DictConnection) -> None:
     """Truncates every data table (people + their source-specific detail
     rows, match flags, upload records, audio submissions, plus any custom
     destination tables created via the merge page's "Create a new table"
@@ -177,7 +196,7 @@ _RESERVED_TABLE_NAMES = {
 }
 
 
-def validate_person_table_name(table_name):
+def validate_person_table_name(table_name: str) -> None:
     """Raises ValueError with a user-facing message if table_name isn't
     safe to interpolate into raw SQL (table names can't be parameterized
     like values) or collides with a table this app already uses for
@@ -193,7 +212,7 @@ def validate_person_table_name(table_name):
         raise ValueError(f"'{table_name}' is a reserved table name -- pick another.")
 
 
-def ensure_person_tables_registry(conn):
+def ensure_person_tables_registry(conn: DictConnection) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "CREATE TABLE IF NOT EXISTS custom_person_tables ("
@@ -204,7 +223,7 @@ def ensure_person_tables_registry(conn):
     conn.commit()
 
 
-def list_person_tables(conn):
+def list_person_tables(conn: DictConnection) -> List[str]:
     """["persons"] plus every custom destination table created so far,
     for populating the merge page's destination-table dropdown."""
     ensure_person_tables_registry(conn)
@@ -214,7 +233,7 @@ def list_person_tables(conn):
     return ["persons"] + extra
 
 
-def ensure_person_table(conn, table_name):
+def ensure_person_table(conn: DictConnection, table_name: str) -> None:
     """Creates table_name (mirroring persons' core columns) if it doesn't
     already exist, and registers it in custom_person_tables. No-op for
     "persons" itself, which always exists via db/schema.sql. Called only

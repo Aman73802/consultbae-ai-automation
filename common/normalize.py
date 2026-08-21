@@ -4,6 +4,7 @@ what "the same phone number" or "the same city" means.
 """
 import re
 from datetime import datetime
+from typing import Any, Optional, Tuple
 
 # --- city -------------------------------------------------------------
 
@@ -24,7 +25,7 @@ CITY_MAP = {
 }
 
 
-def canonical_city(raw):
+def canonical_city(raw: Any) -> Optional[str]:
     if raw is None:
         return None
     key = re.sub(r"\s+", " ", str(raw).strip().lower())
@@ -35,7 +36,7 @@ def canonical_city(raw):
 
 # --- phone --------------------------------------------------------------
 
-def normalize_phone(raw):
+def normalize_phone(raw: Any) -> Optional[str]:
     """Strip everything but digits and keep the last 10 -- that's the
     actual subscriber number regardless of +91 / 091 / 91 / dash prefixes
     used across the three files."""
@@ -49,7 +50,7 @@ def normalize_phone(raw):
 
 # --- email ----------------------------------------------------------------
 
-def normalize_email(raw):
+def normalize_email(raw: Any) -> Optional[str]:
     if raw is None:
         return None
     e = str(raw).strip().lower()
@@ -60,7 +61,7 @@ def normalize_email(raw):
 
 # --- name -------------------------------------------------------------
 
-def normalize_name_key(raw):
+def normalize_name_key(raw: Any) -> Optional[str]:
     """Lowercase/collapsed-whitespace form used only to *detect* possible
     same-name collisions, never used as the actual merge key."""
     if raw is None:
@@ -68,7 +69,7 @@ def normalize_name_key(raw):
     return re.sub(r"\s+", " ", str(raw).strip().lower())
 
 
-def display_name(raw):
+def display_name(raw: Any) -> Optional[str]:
     """source3 has several ALL-CAPS names (e.g. 'MANISH BHATIA') alongside
     normally-cased ones elsewhere. Title-case only the names that are
     entirely uppercase, so we're not guessing at capitalization for names
@@ -86,7 +87,7 @@ def display_name(raw):
 _DATE_FORMATS = ("%d-%m-%Y", "%Y-%m-%d", "%m/%d/%Y", "%d %b %Y")
 
 
-def parse_applied_date(raw):
+def parse_applied_date(raw: Any) -> Optional[str]:
     """source1 mixes DD-MM-YYYY, YYYY-MM-DD, MM/DD/YYYY and 'D Mon YYYY'
     in the same column. MM/DD/YYYY is distinguishable from DD/MM/YYYY
     here because at least one slash-date in the file (07/13/2026) has a
@@ -108,7 +109,7 @@ def parse_applied_date(raw):
 LAKH_THRESHOLD = 1000  # see README Data Issues Found for the reasoning
 
 
-def parse_ctc(raw):
+def parse_ctc(raw: Any) -> Tuple[Optional[float], Optional[bool]]:
     """source1's Current CTC column mixes absolute rupee values
     (e.g. 417964) with CTC expressed in lakhs (e.g. 4.2, meaning 4.2 LPA).
     Every lakh-style value in the file is a small decimal under 20; every
@@ -138,7 +139,7 @@ _RATE_HR_RE = re.compile(r"^([\d.]+)\s*/\s*hr$")
 _RATE_MONTH_RE = re.compile(r"^([\d.]+)\s*k\s*/\s*month$")
 
 
-def parse_rate_to_hourly(raw):
+def parse_rate_to_hourly(raw: Any) -> Optional[float]:
     if raw is None or not str(raw).strip():
         return None
     raw = str(raw).strip().lower()
@@ -154,7 +155,7 @@ def parse_rate_to_hourly(raw):
 
 # --- misc -------------------------------------------------------------
 
-def parse_verified(raw):
+def parse_verified(raw: Any) -> Optional[int]:
     """source3 'Verified' column: Y/N/Yes/No/yes/No mixed case -> bool."""
     if raw is None:
         return None
@@ -166,7 +167,7 @@ def parse_verified(raw):
     return None
 
 
-def canonical_status(raw):
+def canonical_status(raw: Any) -> Optional[str]:
     if raw is None or not str(raw).strip():
         return None
     return str(raw).strip().capitalize()

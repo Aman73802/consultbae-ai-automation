@@ -3,3 +3,4 @@
 ruff==0.16.4
 mypy==1.19.1
 pytest==8.4.2
+types-PyMySQL==1.1.0.20251220
