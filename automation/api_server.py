@@ -40,6 +40,24 @@ def combined_skills(row):
     return ", ".join(seen.values())
 
 
+@app.get("/")
+def index():
+    """This is the Task 2 *supporting* API, not n8n itself -- n8n is a
+    separate app you run/import the workflow into (see automation/README.md).
+    This root route just exists so hitting this port in a browser shows
+    something useful instead of Flask's default 404."""
+    return jsonify({
+        "what_is_this": "ConsultBae Task 2 supporting API (not n8n)",
+        "n8n_setup": "see automation/README.md -- n8n runs separately, "
+                      "typically on http://localhost:5678",
+        "endpoints": {
+            "GET /health": "connectivity check",
+            "GET /api/people": "people needing a skill_category tag (what n8n reads)",
+            "PATCH /api/people/<id>/skill_category": "what n8n writes back",
+        },
+    })
+
+
 @app.get("/health")
 def health():
     ok = True
