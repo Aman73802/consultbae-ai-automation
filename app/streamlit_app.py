@@ -21,7 +21,8 @@ import streamlit as st
 
 from app import auth
 from app.theme import inject_css, render_sidebar_brand, render_scroll_to_top, APP_NAME
-from app.page_modules import merge_page, automation_page, voice_page, quality_page, scale_page
+from app.page_modules import (merge_page, automation_page, voice_page, quality_page,
+                               scale_page, settings_page)
 from common.db import ensure_users_table, get_connection, init_schema, seed_admin_user
 
 st.set_page_config(page_title=APP_NAME, layout="wide", initial_sidebar_state="expanded")
@@ -54,6 +55,8 @@ pages = [
     st.Page(quality_page.render, title="Data Quality Report", url_path="data-quality"),
     st.Page(scale_page.render, title="Scale Readiness Plan", url_path="scale-readiness"),
 ]
+if st.session_state.get("role") == "admin":
+    pages.append(st.Page(settings_page.render, title="Settings", url_path="settings"))
 nav = st.navigation(pages)
 
 auth.render_logout_control()
