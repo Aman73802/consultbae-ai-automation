@@ -1,0 +1,112 @@
+# Render Blueprint -- deploys all 3 of this project's own services as
+# free web services. Connect this repo in Render as "New > Blueprint"
+# and it reads this file automatically.
+#
+# What this does NOT provision (both need a separate free account,
+# Render doesn't offer either):
+#   - MySQL (app data)      -> PlanetScale free tier
+#   - Postgres (n8n's own workflow/credential storage) -> Neon free tier
+# See DEPLOYMENT.md for the full step-by-step, including exactly which
+# values go into the "sync: false" secrets below (Render will prompt for
+# these in its dashboard after you apply this blueprint -- they are
+# deliberately NOT filled in here so no secret ever needs to be
+# committed to this repo).
+
+services:
+  # ------------------------------------------------------------------
+  # The Streamlit app itself (Data Merge Engine, Voice Intake, Data
+  # Quality Report, Scale Readiness Plan, Skill Automation, Settings).
+  # ------------------------------------------------------------------
+  - type: web
+    name: nexora-app
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: MYSQL_HOST
+        sync: false
+      - key: MYSQL_PORT
+        value: "3306"
+      - key: MYSQL_USER
+        sync: false
+      - key: MYSQL_PASSWORD
+        sync: false
+      - key: MYSQL_DATABASE
+        sync: false
+      - key: MYSQL_SSL
+        value: "true"
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: N8N_BASE_URL
+        value: https://nexora-n8n.onrender.com
+
+  # ------------------------------------------------------------------
+  # The Flask API n8n's Task 2 workflow calls (GET /api/people,
+  # PATCH /api/people/<id>/skill_category). Gated by API_KEY -- every
+  # /api/* request must send a matching X-API-Key header once this is
+  # set (see automation/api_server.py).
+  # ------------------------------------------------------------------
+  - type: web
+    name: nexora-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 automation/api_server.py
+    envVars:
+      - key: MYSQL_HOST
+        sync: false
+      - key: MYSQL_PORT
+        value: "3306"
+      - key: MYSQL_USER
+        sync: false
+      - key: MYSQL_PASSWORD
+        sync: false
+      - key: MYSQL_DATABASE
+        sync: false
+      - key: MYSQL_SSL
+        value: "true"
+      - key: API_KEY
+        generateValue: true
+
+  # ------------------------------------------------------------------
+  # n8n itself, running the official Docker image. DB_TYPE=postgresdb
+  # points its own internal storage (workflows/credentials/execution
+  # history) at an external free Postgres (Neon) instead of local
+  # SQLite -- Render's free web services don't reliably keep a local
+  # disk across redeploys, so SQLite storage would be wiped.
+  #
+  # n8n's own login (its "owner account" setup screen on first visit)
+  # is what actually gates the editor -- complete that immediately
+  # after this first deploys, before sharing the URL with anyone.
+  # ------------------------------------------------------------------
+  - type: web
+    name: nexora-n8n
+    runtime: image
+    plan: free
+    image:
+      url: docker.n8n.io/n8nio/n8n:latest
+    dockerCommand: >-
+      sh -c "N8N_PORT=$PORT N8N_PROTOCOL=https N8N_HOST=$RENDER_EXTERNAL_HOSTNAME
+      WEBHOOK_URL=https://$RENDER_EXTERNAL_HOSTNAME/ n8n start"
+    envVars:
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        sync: false
+      - key: DB_POSTGRESDB_PORT
+        value: "5432"
+      - key: DB_POSTGRESDB_DATABASE
+        sync: false
+      - key: DB_POSTGRESDB_USER
+        sync: false
+      - key: DB_POSTGRESDB_PASSWORD
+        sync: false
+      - key: DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
+        value: "true"

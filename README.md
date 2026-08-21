@@ -22,7 +22,12 @@ app/audio_utils.py          Task 3: audio property extraction
 app/page_modules/           the 5 sidebar pages (one module each)
 automation/                 Task 2 — n8n workflow JSON + the Flask API it calls
 .env.example                template for MySQL / login / N8N_BASE_URL config
+render.yaml                 Render Blueprint for a free-tier cloud deploy (see DEPLOYMENT.md)
 ```
+
+**Deploying this somewhere other than your own machine?** See
+[DEPLOYMENT.md](DEPLOYMENT.md) — a free-tier setup (Render + PlanetScale
++ Neon + Groq) with no server bills.
 
 ## Setup
 
