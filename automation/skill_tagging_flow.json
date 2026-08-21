@@ -15,7 +15,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://localhost:5001/api/people",
+        "url": "http://127.0.0.1:5001/api/people",
         "authentication": "none",
         "options": {}
       },
@@ -31,7 +31,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://localhost:11434/api/chat",
+        "url": "http://127.0.0.1:11434/api/chat",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -74,7 +74,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=http://localhost:5001/api/people/{{$json.person_id}}/skill_category",
+        "url": "=http://127.0.0.1:5001/api/people/{{$json.person_id}}/skill_category",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
