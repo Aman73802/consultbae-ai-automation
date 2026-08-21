@@ -138,15 +138,25 @@ def ensure_schema(conn: Optional[DictConnection] = None) -> bool:
     the other ran first -- on a fresh deployment whichever one gets the
     first request has to be able to bootstrap on its own, or it just
     fails with "Table 'persons' doesn't exist" forever.
+
+    The existence check is a SHOW TABLES, deliberately, and any error it
+    raises is left to propagate. An earlier version of this ran
+    "SELECT 1 FROM persons" inside a try/except that treated *any*
+    exception as "the schema is missing" and called init_schema() -- which
+    wipes and recreates every table. A single transient connection error
+    during that probe was therefore enough to destroy the whole database,
+    and did. Failing loudly on a broken connection is strictly better than
+    guessing that an empty schema is the explanation.
     """
     own_conn = conn is None
     if conn is None:
         conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM persons LIMIT 1")
-        return False
-    except Exception:
+            cur.execute("SHOW TABLES LIKE 'persons'")
+            exists = cur.fetchone() is not None
+        if exists:
+            return False
         init_schema(conn)
         return True
     finally:
