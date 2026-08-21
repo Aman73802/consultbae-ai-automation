@@ -1,9 +1,11 @@
 """Page 1 -- Data Merge Engine (Task 1).
 
-Uploads CSVs, runs the same cleaning/matching logic pipeline/merge.py's
-CLI uses (via run_merge(), incrementally so nothing existing is wiped),
-and shows/exports the current persons table. See pipeline/merge.py's
-run_merge() docstring for the fresh-vs-incremental distinction.
+Uploads CSVs, then a two-step human-reviewed merge against
+pipeline/merge.py's matching logic: Analyze (dry run, no DB writes,
+produces a proposed action per row) then Confirm & Save (writes only
+once the admin has resolved anything ambiguous). See
+pipeline/merge.py's analyze_upload()/confirm_upload() docstrings for
+how a row gets classified.
 """
 import os
 import sys
@@ -15,16 +17,16 @@ import streamlit as st
 from app import merge_export as me
 from app.theme import page_header, card
 from common.db import get_connection
-from pipeline.merge import run_merge, SEED_PATHS
+from pipeline.merge import analyze_upload, confirm_upload, SEED_PATHS
 
 
 def _render_merge_summary(result):
     """Per-row outcome breakdown for the run that just finished --
-    shown once, right after Run Merge, so it's clear the total count
-    moving by (say) 2 after uploading a 12-row file isn't a bug: 10 of
-    those rows matched people already in the database."""
+    shown once, right after Confirm & Save, so it's clear the total
+    count moving by (say) 2 after uploading a 12-row file isn't a bug:
+    10 of those rows matched people already in the database."""
     st.success(
-        f"Merge complete — {result['total_people']} people now in the database. "
+        f"Saved — {result['total_people']} people now in the database. "
         f"**{result['new_people']}** new people added, "
         f"**{result['enriched_people']}** existing people enriched with new data, "
         f"**{result['unchanged_matches']}** row(s) matched with no new information, "
@@ -43,8 +45,85 @@ def _render_merge_summary(result):
         st.text("\n".join(result["log"]))
 
 
-def _run_merge_section(conn, upload_rows):
-    st.markdown("#### Run merge")
+def _candidate_label(c):
+    return (f"Merge into: {c['full_name']} (id={c['person_id']}, "
+            f"phone={c['phone'] or '—'}, email={c['email'] or '—'}, "
+            f"city={c['city'] or '—'})")
+
+
+def _row_label(p):
+    return (f"{p['full_name']} ({p['source_system']}) — "
+            f"phone={p['phone'] or '—'}, email={p['email'] or '—'}, "
+            f"city={p['city'] or '—'}")
+
+
+def _render_review_step(conn, analysis):
+    proposals = analysis["proposals"]
+    auto = [p for p in proposals if p["action"] == "auto_match"]
+    review = [p for p in proposals if p["action"] == "needs_review"]
+    new = [p for p in proposals if p["action"] == "create_new"]
+
+    st.divider()
+    st.markdown("#### Review")
+    st.caption(f"{len(proposals)} row(s) analyzed: **{len(auto)}** auto-matched (confident "
+               f"phone/email match), **{len(review)}** need your review, **{len(new)}** "
+               f"are new people with no existing match.")
+
+    if auto:
+        with st.expander(f"✅ {len(auto)} auto-matched — no review needed"):
+            for p in auto:
+                st.write(f"**{p['full_name']}** ({p['source_system']}) → "
+                         f"merges into existing person_id={p['default']}")
+
+    if new:
+        with st.expander(f"🆕 {len(new)} new people — no existing match found", expanded=False):
+            for p in new:
+                st.write(_row_label(p))
+
+    resolutions = {}
+    if review:
+        st.markdown(f"##### ⚠️ {len(review)} row(s) need your review")
+        st.caption("A same-or-similar name matched an existing person but there's no "
+                   "confirmed phone/email match -- pick who this really is, or confirm "
+                   "it's a new person.")
+        with st.form("review_form"):
+            for p in review:
+                options = ["Create as New Person"] + [_candidate_label(c) for c in p["candidates"]]
+                option_pids = [None] + [c["person_id"] for c in p["candidates"]]
+                default_index = 0
+                if p["default"] is not None and p["default"] in option_pids:
+                    default_index = option_pids.index(p["default"])
+                choice = st.selectbox(_row_label(p), options, index=default_index,
+                                       key=f"resolve_{p['row_index']}")
+                resolutions[p["row_index"]] = option_pids[options.index(choice)]
+            confirm_clicked = st.form_submit_button(
+                "Confirm & Save to Database", type="primary", width="stretch")
+    else:
+        confirm_clicked = st.button(
+            "Confirm & Save to Database", type="primary", width="stretch")
+
+    if confirm_clicked:
+        with st.spinner("Saving to the database..."):
+            try:
+                result = confirm_upload(analysis, resolutions)
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+                return
+        pending_ids = st.session_state.get("merge_analysis_pending_ids", [])
+        if pending_ids:
+            fmt = ",".join(["%s"] * len(pending_ids))
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE uploaded_files SET status='merged' "
+                            f"WHERE id IN ({fmt})", pending_ids)
+            conn.commit()
+        st.session_state["last_merge_summary"] = result
+        st.session_state.pop("merge_analysis", None)
+        st.session_state.pop("merge_analysis_pending_ids", None)
+        st.rerun()
+
+
+def _analyze_and_review_section(conn, upload_rows):
+    st.markdown("#### Analyze")
     include_seed = st.checkbox(
         "Also include the original 3 seed CSVs (source1/2/3 in data/)",
         value=True,
@@ -55,10 +134,10 @@ def _run_merge_section(conn, upload_rows):
     )
 
     pending = [r for r in upload_rows if r["status"] == "pending"]
-    st.caption(f"{len(pending)} pending upload(s) will be merged"
+    st.caption(f"{len(pending)} pending upload(s) will be analyzed"
                + (" + the 3 seed CSVs." if include_seed else "."))
 
-    if st.button("Run Merge", type="primary", disabled=not (pending or include_seed)):
+    if st.button("Analyze", type="primary", disabled=not (pending or include_seed)):
         with conn.cursor() as cur:
             cur.execute("SELECT id, stored_path FROM uploaded_files WHERE status='pending'")
             pending_rows = cur.fetchall()
@@ -67,37 +146,38 @@ def _run_merge_section(conn, upload_rows):
             paths = paths + SEED_PATHS
 
         if not paths:
-            st.warning("Nothing to merge -- upload a file or check the seed-CSV box.")
+            st.warning("Nothing to analyze -- upload a file or check the seed-CSV box.")
             return
 
         pending_ids = [r["id"] for r in pending_rows]
-        with st.spinner(f"Merging {len(paths)} file(s)..."):
+        with st.spinner(f"Analyzing {len(paths)} file(s)..."):
             try:
-                result = run_merge(paths, fresh=False)
-                if pending_ids:
-                    fmt = ",".join(["%s"] * len(pending_ids))
-                    with conn.cursor() as cur:
-                        cur.execute(f"UPDATE uploaded_files SET status='merged' "
-                                    f"WHERE id IN ({fmt})", pending_ids)
-                    conn.commit()
+                analysis = analyze_upload(paths)
             except Exception as e:
-                if pending_ids:
-                    fmt = ",".join(["%s"] * len(pending_ids))
-                    with conn.cursor() as cur:
-                        cur.execute(f"UPDATE uploaded_files SET status='failed' "
-                                    f"WHERE id IN ({fmt})", pending_ids)
-                    conn.commit()
-                st.error(f"Merge failed: {e}")
+                st.error(f"Analyze failed: {e}")
                 return
 
-        st.session_state["last_merge_summary"] = result
+        if pending_ids:
+            fmt = ",".join(["%s"] * len(pending_ids))
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE uploaded_files SET status='analyzed' "
+                            f"WHERE id IN ({fmt})", pending_ids)
+            conn.commit()
+
+        st.session_state["merge_analysis"] = analysis
+        st.session_state["merge_analysis_pending_ids"] = pending_ids
+        st.session_state.pop("last_merge_summary", None)
         st.rerun()
+
+    analysis = st.session_state.get("merge_analysis")
+    if analysis:
+        _render_review_step(conn, analysis)
 
 
 def render():
     page_header("Data Merge Engine",
-                "Upload recruitment / gig-worker / CBNexus exports and merge "
-                "them into one deduplicated people database.",
+                "Upload recruitment / gig-worker / CBNexus exports, review anything "
+                "ambiguous, then confirm before it's written to the database.",
                 eyebrow="01 — Task 1")
 
     conn = get_connection()
@@ -113,6 +193,10 @@ def render():
                 me.save_upload(conn, f)
                 st.session_state["merge_page_seen"].add((f.name, f.size))
             if new_ones:
+                # A stale analysis might not reflect this new file --
+                # force a fresh Analyze before Confirm & Save is offered again.
+                st.session_state.pop("merge_analysis", None)
+                st.session_state.pop("merge_analysis_pending_ids", None)
                 st.success(f"Saved {len(new_ones)} new file(s).")
                 st.rerun()
 
@@ -121,13 +205,13 @@ def render():
                         "status FROM uploaded_files ORDER BY uploaded_at DESC")
             upload_rows = cur.fetchall()
 
-        st.markdown("#### Uploaded files")
-        if upload_rows:
-            st.dataframe(upload_rows, width="stretch", hide_index=True)
-        else:
-            st.caption("No files uploaded yet.")
+        with st.expander("Uploaded Files", expanded=False):
+            if upload_rows:
+                st.dataframe(upload_rows, width="stretch", hide_index=True)
+            else:
+                st.caption("No files uploaded yet.")
 
-        _run_merge_section(conn, upload_rows)
+        _analyze_and_review_section(conn, upload_rows)
 
         last_summary = st.session_state.get("last_merge_summary")
         if last_summary:
@@ -137,7 +221,7 @@ def render():
         st.markdown("#### Current merged database")
         df = me.fetch_people_df(conn)
         st.caption(f"{len(df)} people currently in the `persons` table "
-                   f"(written directly by the merge above -- this is the live state).")
+                   f"(written directly by Confirm & Save above -- this is the live state).")
         st.dataframe(df, width="stretch", hide_index=True)
 
         st.markdown("#### Export")
