@@ -294,25 +294,39 @@ exact download URL was real (checked `Content-Length`/`Content-Type` via
 number, then wrote `db/start_mysql.sh` so this isn't a one-off manual
 sequence of commands I'd have to remember for the video — it downloads,
 initializes, and starts the server idempotently, and `db/stop_mysql.sh`
-tears it down. I rejected just fixing Homebrew with sudo a second time
-for the same reason as the first: it's a change to shared system state
-I can't fully audit the cause of, for a problem that has a clean,
-project-scoped alternative.
+tears it down.
 
-**3. Identity matching with no field common to all 3 files.** This is
-the part of the code I spent the most time actually reading rather than
-just running, because it's the part I'll be asked to extend live. The
-tempting shortcut — match people by name when phone/email don't help —
-is exactly what the assignment's own hint warns against ("same name,
-different phone... could be two different people"), and the data proves
-why: the 3 "Arjun Mehta" rows genuinely resolve to 2-3 different humans,
-since only one pair of them shares a phone number at all. So the merge
-logic treats phone/email evidence as the only thing allowed to merge two
-rows into one person (chained through source1, the only file with both),
-and demotes same-name matching to a flag-only check that never merges on
-its own. The other thing worth being able to defend: source1's
-`Applied Date` mixes DD-MM-YYYY, YYYY-MM-DD, and MM/DD/YYYY, and MM/DD vs
-DD/MM is ambiguous in general — but one actual row, `07/13/2026`, has
-day=13, which can't be a month. That single row proves the slash-format
-in this file is MM/DD/YYYY, so that rule applies to every slash-date in
-the column rather than guessing per-row.
+The exact same pattern repeated twice more setting up Task 2: n8n's
+`isolated-vm` native dependency failed to compile against this
+machine's very new system Node (v26), fixed by downloading a Node LTS
+tarball into `.node-local/` and running n8n under that; and later,
+Ollama (see #3 below) went into `.ollama-local/` the same way. Four
+dependencies, same fix each time, once I recognized the pattern: find
+the official portable/static distribution and run it project-scoped
+instead of touching system state I can't fully audit. I never did fix
+Homebrew itself — every one of these had a clean workaround, so there
+was no need to.
+
+**3. Couldn't get an OpenAI/Anthropic API key, pivoted to a local model,
+and testing caught a real bug in the pivot.** Signing up for either
+provider kept failing with a Google OAuth error
+(`accounts.google.co.in/accounts/SetSID` returning 400) — a browser/
+cookie-session problem on my end, unrelated to this project, and not
+worth losing time troubleshooting mid-assignment. Rather than keep
+retrying, I had Claude switch the workflow's LLM node to a local Ollama
+model (`llama3.2:1b`) — no signup, no key, no cost, and genuinely
+adequate for a 3-label classification task this simple, not just a
+workaround. The part I made sure actually got tested, not just assumed:
+I ran the exact classification call the n8n node would make against 12
+real people from the merged dataset, and the model returned `"webdev"`
+(no space) for one of them instead of `"web dev"`. The original Code
+node did a strict string match against the 3 allowed labels, so that
+response would have silently fallen through to the `data` default —
+wrong, and the kind of bug that's invisible unless you actually run
+real inputs through it instead of trusting the happy-path JSON shape.
+Fixed by collapsing responses to letters-only before matching (`"web
+dev"`, `"webdev"`, `"web-dev"` all map to the same canonical label),
+re-verified against all 12 test people with zero fallbacks triggered
+this time, and left the OpenAI/Anthropic path documented as a swap-back
+in `automation/README.md` in case a hosted model's consistency matters
+more than the no-cost/no-signup tradeoff.
