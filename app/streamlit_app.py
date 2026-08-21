@@ -39,6 +39,7 @@ from common.db import (  # noqa: E402
     get_connection,
     seed_admin_user,
 )
+from pipeline.merge import seed_if_empty  # noqa: E402
 
 st.set_page_config(page_title=APP_NAME, page_icon="🔷", layout="wide",
                     initial_sidebar_state="expanded")
@@ -46,13 +47,18 @@ st.set_page_config(page_title=APP_NAME, page_icon="🔷", layout="wide",
 inject_css()
 
 
+@st.cache_resource
 def ensure_db():
+    """Cached so this runs once per server process, not on every rerun --
+    the seed step below reads three CSVs and does a full merge pass, which
+    is far too expensive to repeat on every widget interaction."""
     conn = get_connection()
     ensure_schema(conn)
     ensure_users_table(conn)
     seed_admin_user(conn, os.environ.get("ADMIN_USERNAME", "admin"),
                      os.environ.get("ADMIN_PASSWORD", "consultbae2026"))
     conn.close()
+    seed_if_empty()  # no-op unless persons is empty (fresh deployment)
 
 
 # Must run BEFORE require_login(): require_login() ends the script (st.stop())

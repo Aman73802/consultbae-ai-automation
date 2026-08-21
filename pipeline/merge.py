@@ -666,6 +666,40 @@ def run_merge(file_paths, fresh=False):
 # CSVs, with the same sanity-check output as always.
 # ---------------------------------------------------------------------
 
+def seed_if_empty() -> int:
+    """Loads the three bundled seed CSVs if -- and only if -- the persons
+    table has no rows yet. Returns how many people ended up in it (0 if
+    it was already populated and nothing was done).
+
+    Why this exists: a freshly deployed database is empty, and an empty
+    database makes the whole app look broken rather than new -- the merge
+    page has nothing to show, the quality report has nothing to measure,
+    and the n8n workflow fetches an empty list and silently does nothing.
+    The seed CSVs ship in data/ and are the intended demo dataset, so a
+    brand-new deployment populating itself from them is the useful
+    default. Set SEED_DEMO_DATA=false to opt out.
+
+    Uses fresh=False deliberately: the schema already exists by the time
+    this runs, and fresh=True would drop and rebuild every table -- fine
+    for the CLI, destructive if this ever ran against a database that
+    someone had already put real data into.
+    """
+    if os.environ.get("SEED_DEMO_DATA", "true").strip().lower() not in ("1", "true", "yes"):
+        return 0
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM persons")
+            row = cur.fetchone()
+        if row and row["c"]:
+            return 0
+    finally:
+        conn.close()
+    logger.info("persons table is empty -- seeding from the bundled demo CSVs")
+    result = run_merge(SEED_PATHS, fresh=False)
+    return int(result["total_people"])
+
+
 def main():
     result = run_merge(SEED_PATHS, fresh=True)
 
