@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 
+from app import dashboard
 from app.audio_utils import extract_properties
 from common import normalize as norm
 from common.db import get_connection, init_schema
@@ -24,7 +25,7 @@ AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
                           "data", "audio")
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
-st.set_page_config(page_title="ConsultBae Audio Collector", layout="centered")
+st.set_page_config(page_title="ConsultBae Take-Home", layout="wide")
 
 
 def ensure_db():
@@ -177,12 +178,54 @@ def page_submissions():
 
 
 def main():
-    st.sidebar.title("ConsultBae Audio Collector")
-    page = st.sidebar.radio("View", ["Submit Audio", "All Submissions"])
-    if page == "Submit Audio":
+    st.sidebar.title("ConsultBae Take-Home")
+    st.sidebar.caption("One app, all 5 tasks. Task 2's actual automation "
+                        "still runs in n8n -- this just shows its result.")
+
+    ensure_db()
+
+    tabs = st.tabs([
+        "🏠 Overview",
+        "1️⃣ Merge & Database",
+        "2️⃣ n8n Automation",
+        "3️⃣ Submit Audio",
+        "3️⃣ All Submissions",
+        "4️⃣ Data Issues",
+        "5️⃣ Stretch",
+    ])
+
+    with tabs[0]:
+        conn = get_connection()
+        try:
+            dashboard.page_overview(conn)
+        finally:
+            conn.close()
+
+    with tabs[1]:
+        conn = get_connection()
+        try:
+            dashboard.page_task1(conn)
+        finally:
+            conn.close()
+
+    with tabs[2]:
+        conn = get_connection()
+        try:
+            dashboard.page_task2(conn)
+        finally:
+            conn.close()
+
+    with tabs[3]:
         page_submit()
-    else:
+
+    with tabs[4]:
         page_submissions()
+
+    with tabs[5]:
+        dashboard.page_task4()
+
+    with tabs[6]:
+        dashboard.page_task5()
 
 
 if __name__ == "__main__":
