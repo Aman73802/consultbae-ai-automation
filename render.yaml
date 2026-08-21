@@ -119,5 +119,12 @@ services:
         sync: false
       - key: DB_POSTGRESDB_PASSWORD
         sync: false
+      # Neon rejects non-SSL connections ("connection is insecure, try using
+      # sslmode=require"). n8n's SSL_ENABLED defaults to false and is only
+      # auto-enabled by the SSL_CA/CERT/KEY vars -- REJECT_UNAUTHORIZED alone
+      # does not turn SSL on, so it has to be set explicitly. No custom CA
+      # needed: Neon's certificate chains to a publicly trusted root.
+      - key: DB_POSTGRESDB_SSL_ENABLED
+        value: "true"
       - key: DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
         value: "true"
