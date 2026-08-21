@@ -57,6 +57,8 @@ python3 pipeline/merge.py            # make sure the consultbae DB exists
 python3 automation/api_server.py     # serves on http://localhost:5001
 ```
 
+No auth needed for local use (the `API_KEY` env var is unset, so `_require_api_key()` is a no-op). Deploying this somewhere publicly reachable? Set `API_KEY` first -- see DEPLOYMENT.md -- otherwise anyone who finds the URL can read every person's name/skills and overwrite `skill_category` values.
+
 Sanity check in another terminal:
 
 ```bash
@@ -75,10 +77,10 @@ automation/export_people.py` dumps the same shape to
 1. Open n8n (self-hosted at `http://localhost:5678`, or the cloud trial).
 2. **Workflows → Import from File** (or the "..." menu → Import) and
    select `automation/skill_tagging_flow.json`.
-3. As imported, the LLM node points at a local Ollama instance and
-   needs no credential setup at all — just make sure Ollama is running
-   (step 3 below). Only switch to OpenAI/Anthropic if you'd rather use
-   those.
+3. As imported, the LLM node points at Groq's hosted API and needs a
+   **Header Auth** credential (step 3 below). If you'd rather run
+   everything fully local instead (no external API at all), see "Local
+   alternative: Ollama" in step 3.
 
 If import ever fails for you (schema drift between n8n versions), the
 flow is simple enough to rebuild by hand in ~5 minutes: Manual Trigger →
@@ -88,15 +90,24 @@ in the description above.
 
 ## 3. The LLM step
 
-The workflow's "Classify Skills via LLM" node is set up to call a local
-**Ollama** instance by default (`http://localhost:11434/api/chat`,
-model `llama3.2:1b`) — no API key, no signup, runs entirely on this
-machine, no cost. This was the fallback after hitting repeated Google
-OAuth session errors trying to sign up for OpenAI/Anthropic; it turned
-out to be a reasonable choice on its own merits for a 3-label
-classification task this simple.
+The workflow's "Classify Skills via LLM" node calls **Groq**'s hosted,
+OpenAI-compatible API (`https://api.groq.com/openai/v1/chat/completions`,
+model `llama-3.1-8b-instant`) — free tier, no card required, and nothing
+to run yourself. Create a **Header Auth** credential in n8n named
+"Groq API Key": Name = `Authorization`, Value = `Bearer <your key from
+console.groq.com>`, then select it on the node.
 
-Start it (same no-brew/no-sudo pattern as MySQL and Node):
+Same reasoning as before, just aimed at deployment instead of a local
+machine: this is a 3-label classification task from a short skill list,
+not open-ended generation, so a small model is genuinely adequate —
+running that model yourself (Ollama, below) costs nothing per request
+but needs an always-on server; a free-tier hosted API needs no server
+at all.
+
+### Local alternative: Ollama
+
+Prefer running the LLM fully locally, no external API/account at all?
+Point the node back at Ollama instead:
 
 ```bash
 mkdir -p .ollama-local && cd .ollama-local
@@ -111,21 +122,21 @@ export OLLAMA_MODELS="$(pwd)/.ollama-local/models"
 (Swap `ollama-darwin.tgz` for the right asset from
 https://github.com/ollama/ollama/releases/latest if you're not on macOS.)
 
-No credential setup needed in n8n for this node — it calls plain HTTP
-with no auth required, since Ollama's local API is unauthenticated by
-design (it only listens on localhost).
+In the node: URL back to `http://localhost:11434/api/chat`,
+`authentication` back to `none`, JSON body back to Ollama's shape
+(`{model, stream: false, options: {temperature: 0}, messages}` instead
+of OpenAI's `{model, temperature, messages}`), and the downstream Code
+node's response parsing back to `$json.message.content` instead of
+`$json.choices[0].message.content`. No credential needed — Ollama's
+local API is unauthenticated by design (only listens on localhost).
 
-**If you'd rather use OpenAI or Anthropic instead** (e.g. you already
-have a key handy): change the node's URL to
-`https://api.openai.com/v1/chat/completions` (OpenAI) or
-`https://api.anthropic.com/v1/messages` (Anthropic), set
-`authentication` to `genericCredentialType` / `httpHeaderAuth` and
-create a **Header Auth** credential (`Authorization: Bearer sk-...` for
-OpenAI, or `x-api-key: sk-ant-...` + a second header
-`anthropic-version: 2023-06-01` for Anthropic). For Anthropic, also
-swap the JSON body to `{model, max_tokens, messages}` and change the
-downstream Code node to read `$json.content[0].text` instead of
-`$json.message.content`.
+**OpenAI or Anthropic instead**: change the node's URL to
+`https://api.openai.com/v1/chat/completions` (OpenAI, same body/response
+shape as Groq — just swap the credential and model name) or
+`https://api.anthropic.com/v1/messages` (Anthropic — needs
+`x-api-key: sk-ant-...` + a second header `anthropic-version:
+2023-06-01`, body shape `{model, max_tokens, messages}`, and the Code
+node reading `$json.content[0].text`).
 
 ## 4. Run it
 
@@ -169,4 +180,8 @@ Verify the result landed in the DB:
   consistent on edge-case skill lists, and Ollama adds a dependency
   (~1.3GB local model, a running server process) that a cloud API
   doesn't. Swapping back to OpenAI/Anthropic is a small, documented
-  change (above) if that tradeoff should go the other way.
+  change (above) if that tradeoff should go the other way. It did, once
+  deployment entered the picture: self-hosting Ollama on a server costs
+  real money for an always-on instance with enough RAM, so the shipped
+  workflow now defaults to Groq's free hosted API instead (step 3) --
+  Ollama is still there as the fully-local, no-external-account option.

@@ -15,8 +15,9 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://127.0.0.1:5001/api/people",
-        "authentication": "none",
+        "url": "https://nexora-api.onrender.com/api/people",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
       "id": "e9c8675e-7afc-46dd-a467-6bebd34f3fab",
@@ -26,13 +27,20 @@
       "position": [
         460,
         300
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Nexora API Key"
+        }
+      }
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:11434/api/chat",
-        "authentication": "none",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -44,7 +52,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"llama3.2:1b\",\n  \"stream\": false,\n  \"options\": {\"temperature\": 0},\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You classify a person's technology skill list into exactly one category: automation-heavy, web dev, or data. automation-heavy means tools like n8n, Zapier, Selenium, web scraping, workflow or API automation. web dev means React, JavaScript, FastAPI, MySQL, front-end or back-end web app building. data means Pandas, MongoDB, SQL, LangChain, data pipeline or ML-adjacent skills. Reply with ONLY the category label and nothing else, no punctuation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Name: {{$json.full_name}}. Skills: {{$json.skills}}. Which category fits best?\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You classify a person's technology skill list into exactly one category: automation-heavy, web dev, or data. automation-heavy means tools like n8n, Zapier, Selenium, web scraping, workflow or API automation. web dev means React, JavaScript, FastAPI, MySQL, front-end or back-end web app building. data means Pandas, MongoDB, SQL, LangChain, data pipeline or ML-adjacent skills. Reply with ONLY the category label and nothing else, no punctuation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Name: {{$json.full_name}}. Skills: {{$json.skills}}. Which category fits best?\"\n    }\n  ]\n}",
         "options": {}
       },
       "id": "c5b4d82e-bd21-4b3a-ab7f-517a10b415d6",
@@ -54,13 +62,19 @@
       "position": [
         680,
         300
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Groq API Key"
+        }
+      }
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "const raw = ($json.message && $json.message.content) || \"\";\n// Small local models don't always reproduce \"web dev\" with the exact\n// space/dash the prompt used (seen \"webdev\" in testing) -- collapse to\n// letters-only before matching so spacing/punctuation variants all map\n// to the same canonical label instead of silently falling through.\nconst collapse = (s) => s.toLowerCase().replace(/[^a-z]/g, \"\");\nconst CATEGORY_MAP = {\n  automationheavy: \"automation-heavy\",\n  webdev: \"web dev\",\n  data: \"data\",\n};\nconst category = CATEGORY_MAP[collapse(raw)] || \"data\";\n\nconst person = $(\"Fetch People Needing Tags\").item.json;\n\nreturn {\n  json: {\n    person_id: person.person_id,\n    full_name: person.full_name,\n    skills: person.skills,\n    skill_category: category,\n    raw_llm_response: raw\n  }\n};"
+        "jsCode": "const raw = ($json.choices && $json.choices[0] && $json.choices[0].message && $json.choices[0].message.content) || \"\";\n// Small models don't always reproduce \"web dev\" with the exact\n// space/dash the prompt used (seen \"webdev\" in testing) -- collapse to\n// letters-only before matching so spacing/punctuation variants all map\n// to the same canonical label instead of silently falling through.\nconst collapse = (s) => s.toLowerCase().replace(/[^a-z]/g, \"\");\nconst CATEGORY_MAP = {\n  automationheavy: \"automation-heavy\",\n  webdev: \"web dev\",\n  data: \"data\",\n};\nconst category = CATEGORY_MAP[collapse(raw)] || \"data\";\n\nconst person = $(\"Fetch People Needing Tags\").item.json;\n\nreturn {\n  json: {\n    person_id: person.person_id,\n    full_name: person.full_name,\n    skills: person.skills,\n    skill_category: category,\n    raw_llm_response: raw\n  }\n};"
       },
       "id": "3f229d90-e030-46e7-b40f-e3987083c68d",
       "name": "Extract Skill Category",
@@ -74,8 +88,9 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=http://127.0.0.1:5001/api/people/{{$json.person_id}}/skill_category",
-        "authentication": "none",
+        "url": "=https://nexora-api.onrender.com/api/people/{{$json.person_id}}/skill_category",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -97,7 +112,13 @@
       "position": [
         1120,
         300
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Nexora API Key"
+        }
+      }
     }
   ],
   "connections": {
