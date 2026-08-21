@@ -26,8 +26,11 @@ services:
     envVars:
       - key: MYSQL_HOST
         sync: false
+      # TiDB Cloud serves MySQL on 4000, not MySQL's usual 3306. Hardcoded
+      # (not sync: false) so a blueprint sync can't silently reset it -- but
+      # change it here, not just in the dashboard, if the provider changes.
       - key: MYSQL_PORT
-        value: "3306"
+        value: "4000"
       - key: MYSQL_USER
         sync: false
       - key: MYSQL_PASSWORD
@@ -60,8 +63,11 @@ services:
     envVars:
       - key: MYSQL_HOST
         sync: false
+      # TiDB Cloud serves MySQL on 4000, not MySQL's usual 3306. Hardcoded
+      # (not sync: false) so a blueprint sync can't silently reset it -- but
+      # change it here, not just in the dashboard, if the provider changes.
       - key: MYSQL_PORT
-        value: "3306"
+        value: "4000"
       - key: MYSQL_USER
         sync: false
       - key: MYSQL_PASSWORD

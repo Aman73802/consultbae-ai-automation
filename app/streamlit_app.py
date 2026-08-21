@@ -39,7 +39,6 @@ st.set_page_config(page_title=APP_NAME, page_icon="🔷", layout="wide",
                     initial_sidebar_state="expanded")
 
 inject_css()
-auth.require_login()
 
 
 def ensure_db():
@@ -55,7 +54,15 @@ def ensure_db():
     conn.close()
 
 
+# Must run BEFORE require_login(): require_login() ends the script (st.stop())
+# while showing the login screen, so against a brand-new empty database the
+# bootstrap below would never get to run -- no users table, no seeded admin,
+# nothing to log in with. That deadlock is invisible locally (the dev database
+# is always already initialized by an earlier pipeline/merge.py run) and only
+# shows up on a fresh deployment.
 ensure_db()
+
+auth.require_login()
 
 render_sidebar_brand()
 
