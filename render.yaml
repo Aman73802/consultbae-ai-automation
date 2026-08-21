@@ -127,6 +127,30 @@ services:
     envVars:
       - key: N8N_ENCRYPTION_KEY
         generateValue: true
+
+      # --- Secrets the workflow reads via {{ $env.* }} --------------------
+      # The workflow's HTTP nodes send their auth headers from these instead
+      # of using n8n credential records. n8n credentials live in n8n's own
+      # database and are never part of an exported workflow, so every
+      # re-import (or a wiped n8n database) silently loses them and every
+      # node fails with "Credentials not found" until they're recreated by
+      # hand. Env vars survive both, keep the secrets out of the committed
+      # JSON just the same, and mean the imported workflow runs as-is.
+      #
+      # $env access is controlled by N8N_BLOCK_ENV_ACCESS_IN_NODE, which
+      # already defaults to false (i.e. allowed) -- set explicitly so a
+      # future default flip doesn't quietly break this.
+      - key: N8N_BLOCK_ENV_ACCESS_IN_NODE
+        value: "false"
+      # Pulled straight from the API service, so there's no second copy of
+      # this value to keep in sync and no chance of a mismatch.
+      - key: NEXORA_API_KEY
+        fromService:
+          name: nexora-api
+          type: web
+          envVarKey: API_KEY
+      - key: GROQ_API_KEY
+        sync: false
       - key: N8N_PORT
         value: "10000"  # Render's default $PORT for web services
       - key: N8N_PROTOCOL

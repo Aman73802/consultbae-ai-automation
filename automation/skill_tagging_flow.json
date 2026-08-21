@@ -16,9 +16,16 @@
       "parameters": {
         "method": "GET",
         "url": "https://nexora-api-4v2w.onrender.com/api/people",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {}
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.NEXORA_API_KEY }}"
+            }
+          ]
+        }
       },
       "id": "e9c8675e-7afc-46dd-a467-6bebd34f3fab",
       "name": "Fetch People Needing Tags",
@@ -27,26 +34,22 @@
       "position": [
         460,
         300
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Nexora API Key"
-        }
-      }
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
             }
           ]
         },
@@ -70,12 +73,6 @@
         680,
         300
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Groq API Key"
-        }
-      },
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -99,14 +96,16 @@
       "parameters": {
         "method": "PATCH",
         "url": "=https://nexora-api-4v2w.onrender.com/api/people/{{$json.person_id}}/skill_category",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.NEXORA_API_KEY }}"
             }
           ]
         },
@@ -122,13 +121,7 @@
       "position": [
         1120,
         300
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Nexora API Key"
-        }
-      }
+      ]
     }
   ],
   "connections": {

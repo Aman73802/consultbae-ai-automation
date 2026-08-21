@@ -77,10 +77,33 @@ automation/export_people.py` dumps the same shape to
 1. Open n8n (self-hosted at `http://localhost:5678`, or the cloud trial).
 2. **Workflows → Import from File** (or the "..." menu → Import) and
    select `automation/skill_tagging_flow.json`.
-3. As imported, the LLM node points at Groq's hosted API and needs a
-   **Header Auth** credential (step 3 below). If you'd rather run
-   everything fully local instead (no external API at all), see "Local
-   alternative: Ollama" in step 3.
+3. That's it — no credentials to create. The three HTTP nodes read their
+   auth headers from n8n's own environment via `{{ $env.NEXORA_API_KEY }}`
+   and `{{ $env.GROQ_API_KEY }}`, so start n8n with both set:
+
+   ```bash
+   NEXORA_API_KEY="$API_KEY" GROQ_API_KEY=gsk_... npx n8n start
+   ```
+
+   (`NEXORA_API_KEY` is whatever `API_KEY` the Flask API is running with —
+   leave both unset for a purely local run where the API has no auth.)
+
+   **Why env vars and not n8n credentials**: n8n credentials live in n8n's
+   own database and are deliberately never included in an exported
+   workflow — only the credential *name* is. So a fresh import, or a
+   redeployed n8n whose database was replaced, loses every credential and
+   each node fails with "Credentials not found" until you recreate them by
+   hand. Env vars survive both, keep the secrets out of the committed JSON
+   exactly the same way, and let the imported workflow run untouched.
+
+   In the editor, an expression preview may read
+   `[ERROR: access to env vars denied]` even when it works at runtime;
+   that's a known n8n UI quirk, not a misconfiguration. If it genuinely
+   fails when executed, set `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`
+   explicitly (it is the default, but can be flipped by a host).
+
+   Prefer no external LLM API at all? See "Local alternative: Ollama" in
+   step 3.
 
 If import ever fails for you (schema drift between n8n versions), the
 flow is simple enough to rebuild by hand in ~5 minutes: Manual Trigger →
@@ -93,19 +116,14 @@ in the description above.
 The workflow's "Classify Skills via LLM" node calls **Groq**'s hosted,
 OpenAI-compatible API (`https://api.groq.com/openai/v1/chat/completions`,
 model `openai/gpt-oss-20b`) — free tier, no card required, and nothing
-to run yourself. Create a **Header Auth** credential in n8n named
-"Groq API Key": Name = `Authorization`, Value = `Bearer <your key from
-console.groq.com>`, then select it on the node.
+to run yourself. Get a key from console.groq.com and hand it to n8n as
+`GROQ_API_KEY` (step 2); the node builds its own
+`Authorization: Bearer ...` header from it.
 
-Note the two separate "names" in that credential dialog, which are easy
-to mix up: the credential's own display name is "Groq API Key", but the
-*header* Name field must be literally `Authorization` (n8n rejects a
-header name containing spaces with "Header name must be a valid HTTP
-token"). And if Groq retires the model above (it did retire the
-`llama-3.1-*` line, which this workflow used to point at), you'll get
-"The model ... does not exist"; check
-https://console.groq.com/docs/models for the current ID and change just
-the `model` field in the node's JSON body.
+If Groq retires that model (it did retire the `llama-3.1-*` line this
+workflow used to point at), you'll get "The model ... does not exist";
+check https://console.groq.com/docs/models for the current ID and change
+just the `model` field in the node's JSON body.
 
 Same reasoning as before, just aimed at deployment instead of a local
 machine: this is a 3-label classification task from a short skill list,

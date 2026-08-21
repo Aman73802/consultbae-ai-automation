@@ -74,13 +74,16 @@ Render assigns each service a URL like `https://nexora-app-xxxx.onrender.com` �
 
 ## 8. Import the n8n workflow
 
-1. In your deployed n8n, **Workflows → Import from File**, select `automation/skill_tagging_flow.json`.
-2. Create two credentials (**Credentials → New**, type **Header Auth**):
-   - **"Groq API Key"**: Name = `Authorization`, Value = `Bearer <your Groq key from step 3>`
-   - **"Nexora API Key"**: Name = `X-API-Key`, Value = `<the API_KEY Render generated for nexora-api — find it in that service's Environment tab>`
-3. Open the imported workflow's 3 HTTP Request nodes (**Fetch People Needing Tags**, **Classify Skills via LLM**, **Write Back to Database**) and select the matching credential in each (the import can't auto-attach credentials across n8n instances — this is normal, expected n8n behavior, not a sign anything's broken).
-4. If your `nexora-api` URL didn't come out as plain `nexora-api.onrender.com` (see step 7), edit the URL in **Fetch People Needing Tags** and **Write Back to Database** to match.
-5. Run `pipeline/merge.py` once against the TiDB Cloud DB (or use the Data Merge Engine page) so there's actual data to tag, then click **Execute Workflow**.
+n8n's editor is served from `/home/workflows`, not `/` — the bare root returns "Cannot GET /". Open `https://<your-n8n>.onrender.com/home/workflows` and complete the owner-account setup first (see step 6).
+
+1. **Workflows → Import from File**, select `automation/skill_tagging_flow.json`.
+2. **No credentials to create.** The three HTTP nodes read their auth headers from n8n's environment (`{{ $env.NEXORA_API_KEY }}` / `{{ $env.GROQ_API_KEY }}`), both already set on the `nexora-n8n` service by `render.yaml` — `NEXORA_API_KEY` is wired directly from `nexora-api`'s generated `API_KEY` via `fromService`, so there's no value to copy by hand, and `GROQ_API_KEY` is the one secret Render prompted you for.
+
+   This is deliberate: n8n credentials live in n8n's own database and are never part of an exported workflow, so with credentials every re-import — or any redeploy that replaced n8n's database — silently loses them and every node fails with "Credentials not found". Env vars survive both and keep the secrets out of the committed JSON just the same.
+3. If your `nexora-api` URL didn't come out as plain `nexora-api.onrender.com` (see step 7), edit the URL in **Fetch People Needing Tags** and **Write Back to Database** to match.
+4. Click **Execute Workflow**. There should already be data to tag — a fresh, empty database seeds itself from the bundled CSVs on first boot (`seed_if_empty()`), so you do not need to run `pipeline/merge.py` by hand.
+
+   Expect a full pass to take **~4 minutes**, not seconds: the LLM node is deliberately throttled (1 item per batch, 4s apart) to stay under Groq's free-tier tokens-per-minute limit. Slow is correct here, not stuck.
 
 ---
 
