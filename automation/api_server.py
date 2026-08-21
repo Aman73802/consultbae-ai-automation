@@ -26,6 +26,26 @@ app = Flask(__name__)
 
 ALLOWED_CATEGORIES = {"automation-heavy", "web dev", "data"}
 
+# Unset by default (matches the original local-only behavior -- this API
+# has no auth at all when only reachable on localhost). Set API_KEY once
+# this is deployed somewhere publicly reachable: every /api/* request
+# must then send a matching X-API-Key header, or get a 401. n8n's HTTP
+# Request nodes send this via a Header Auth credential (see
+# automation/README.md), so the actual key value never needs to be
+# committed to the workflow JSON.
+API_KEY = os.environ.get("API_KEY")
+
+
+@app.before_request
+def _require_api_key():
+    if not API_KEY:
+        return None
+    if not request.path.startswith("/api/"):
+        return None  # / and /health stay open -- no sensitive data there
+    if request.headers.get("X-API-Key") != API_KEY:
+        return jsonify({"error": "missing or invalid X-API-Key header"}), 401
+    return None
+
 
 def combined_skills(row):
     raw_parts = []
@@ -143,4 +163,13 @@ if __name__ == "__main__":
               f"Make sure the local MySQL server is running and "
               f"pipeline/merge.py has been run at least once.")
         sys.exit(1)
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    # PORT is set by hosting platforms (e.g. Render) to whatever port they
+    # actually route traffic to; 5001 is just the local-dev fallback.
+    # debug=True enables Werkzeug's interactive debugger, which lets
+    # anyone who can reach an unhandled-exception page execute arbitrary
+    # Python -- fine on localhost, a real remote-code-execution hole on
+    # anything publicly reachable, so it's gated on an explicit opt-in
+    # rather than defaulting on.
+    port = int(os.environ.get("PORT", "5001"))
+    debug = os.environ.get("FLASK_DEBUG", "false").strip().lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=port, debug=debug)

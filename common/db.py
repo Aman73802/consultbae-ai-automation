@@ -9,8 +9,9 @@ the local MySQL instance used during development was set up.
 """
 import os
 import re
+import ssl
 import threading
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pymysql
 import pymysql.cursors
@@ -26,6 +27,10 @@ MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
 MYSQL_USER = os.environ.get("MYSQL_USER", "consultbae")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "consultbae_dev_pw")
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "consultbae")
+# Hosted MySQL providers (e.g. PlanetScale) require TLS and reject plain
+# connections outright -- local dev (db/start_mysql.sh) doesn't speak TLS
+# at all, so this defaults off and only turns on when explicitly asked.
+MYSQL_SSL = os.environ.get("MYSQL_SSL", "false").strip().lower() in ("1", "true", "yes")
 
 # human-readable connection string, used only in log/health-check messages
 DB_PATH = f"mysql://{MYSQL_USER}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
@@ -62,6 +67,13 @@ def _get_pool() -> PooledDB:
     if _pool is None:
         with _pool_lock:
             if _pool is None:  # re-check: another thread may have won the race
+                extra: Dict[str, Any] = {}
+                if MYSQL_SSL:
+                    # ssl.create_default_context() verifies against the
+                    # system's trusted CA bundle -- correct for a host like
+                    # PlanetScale whose certificate is publicly trusted, no
+                    # need to ship/pin a specific CA file for that case.
+                    extra["ssl"] = ssl.create_default_context()
                 _pool = PooledDB(
                     creator=pymysql,
                     mincached=1,
@@ -76,6 +88,7 @@ def _get_pool() -> PooledDB:
                     database=MYSQL_DATABASE,
                     cursorclass=pymysql.cursors.DictCursor,
                     autocommit=False,
+                    **extra,
                 )
     return _pool
 
