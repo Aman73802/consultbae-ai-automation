@@ -69,9 +69,16 @@ def normalize_name_key(raw):
 
 
 def display_name(raw):
+    """source3 has several ALL-CAPS names (e.g. 'MANISH BHATIA') alongside
+    normally-cased ones elsewhere. Title-case only the names that are
+    entirely uppercase, so we're not guessing at capitalization for names
+    that already look fine."""
     if raw is None:
         return None
-    return re.sub(r"\s+", " ", str(raw).strip())
+    name = re.sub(r"\s+", " ", str(raw).strip())
+    if name.isupper():
+        return name.title()
+    return name
 
 
 # --- dates (source1 "Applied Date") --------------------------------------
