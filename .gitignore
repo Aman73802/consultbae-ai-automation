@@ -20,4 +20,8 @@ __pycache__/
 data/audio/*
 !data/audio/.gitkeep
 
+# CSVs uploaded through the Task 1 "Upload & Merge" page
+data/uploads/*
+!data/uploads/.gitkeep
+
 automation/people_export.json

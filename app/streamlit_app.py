@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 
-from app import dashboard
+from app import dashboard, upload_pages
 from app.audio_utils import extract_properties
 from common import normalize as norm
 from common.db import get_connection, init_schema
@@ -187,6 +187,8 @@ def main():
     tabs = st.tabs([
         "🏠 Overview",
         "1️⃣ Merge & Database",
+        "1️⃣ Upload & Merge",
+        "1️⃣ Merge Results",
         "2️⃣ n8n Automation",
         "3️⃣ Submit Audio",
         "3️⃣ All Submissions",
@@ -211,20 +213,34 @@ def main():
     with tabs[2]:
         conn = get_connection()
         try:
-            dashboard.page_task2(conn)
+            upload_pages.page_upload_merge(conn)
         finally:
             conn.close()
 
     with tabs[3]:
-        page_submit()
+        conn = get_connection()
+        try:
+            upload_pages.page_merge_results(conn)
+        finally:
+            conn.close()
 
     with tabs[4]:
-        page_submissions()
+        conn = get_connection()
+        try:
+            dashboard.page_task2(conn)
+        finally:
+            conn.close()
 
     with tabs[5]:
-        dashboard.page_task4()
+        page_submit()
 
     with tabs[6]:
+        page_submissions()
+
+    with tabs[7]:
+        dashboard.page_task4()
+
+    with tabs[8]:
         dashboard.page_task5()
 
 

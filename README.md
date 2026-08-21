@@ -65,6 +65,31 @@ cleaning/matching decision, then a summary:
   ...
 ```
 
+### Alternative: run Task 1 visually (Upload & Merge UI)
+
+The CLI above is the primary, documented way to run Task 1. There's also
+a UI for it, in the same Streamlit app as everything else:
+
+```bash
+bash db/start_mysql.sh
+streamlit run app/streamlit_app.py
+```
+
+Then open the **1️⃣ Upload & Merge** tab: upload one or more CSVs,
+optionally include the original 3 seed files (on by default), and hit
+**Run Merge**. The **1️⃣ Merge Results** tab shows the live `persons`
+table with CSV/Excel/PDF/SQL export buttons.
+
+This UI path calls the exact same `run_merge()` function
+`pipeline/merge.py`'s CLI uses (same cleaning, same phone/email
+matching, same ambiguous-name flagging) — but **incrementally**, not as
+a full rebuild: it matches new rows against people already in the
+database instead of wiping everything first, so it doesn't erase Task 2
+skill tags or Task 3 audio submissions the way re-running the CLI does.
+A file's column headers are matched against the 3 known source schemas
+to decide how to clean it; a file that doesn't match any of them is
+skipped and reported, not guessed at.
+
 ## Run — Task 3 (audio app)
 
 ```bash

@@ -1,14 +1,22 @@
 """Task 1 -- merge pipeline.
 
-Reads the three messy source CSVs, cleans each one, resolves person
-identity across all three (no single ID is common to all of them: source1
-and source2 share email, source3 has no email at all and must be matched
-by phone), and loads everything into the MySQL "consultbae" database
-(see common/db.py for connection settings; run a local MySQL server
-first -- see README "Setup").
+Reads source CSVs, cleans each one, resolves person identity across all
+of them (no single ID is common to all three original files: source1
+and source2 share email, source3 has no email at all and must be
+matched by phone), and loads everything into the "consultbae" MySQL
+database.
 
 Run with:  python3 pipeline/merge.py
+
+This runs a full, from-scratch rebuild using the original 3 seed CSVs
+in data/ -- exactly what it always did. The underlying logic is also
+exposed as run_merge(file_paths) so the "Upload & Merge" Streamlit page
+(app/upload_pages.py) can call the identical cleaning/matching code
+against user-uploaded files, incrementally, without wiping the
+existing database (see run_merge's docstring for the fresh vs.
+incremental distinction).
 """
+import csv
 import os
 import sys
 
@@ -25,23 +33,47 @@ DATA_DIR = os.path.join(REPO_ROOT, "data")
 SRC1_PATH = os.path.join(DATA_DIR, "source1_naukri_applicants.csv")
 SRC2_PATH = os.path.join(DATA_DIR, "source2_gig_workers.csv")
 SRC3_PATH = os.path.join(DATA_DIR, "source3_cbnexus_contacts.csv")
+SEED_PATHS = [SRC1_PATH, SRC2_PATH, SRC3_PATH]
 
 
-# A running log of every cleaning/matching decision made, printed at the
-# end and also useful raw material for the Data Issues Found report.
-issue_log = []
+# ---------------------------------------------------------------------
+# source-type detection (for run_merge() accepting arbitrary file lists)
+# ---------------------------------------------------------------------
+
+SOURCE1_COLUMNS = {"Full Name", "Email", "Phone", "City", "Experience (Years)",
+                    "Current CTC", "Applied Date", "Skills"}
+SOURCE2_COLUMNS = {"email_id", "worker_name", "rate", "location", "status", "skill_tags"}
+SOURCE3_COLUMNS = {"Name", "Phone Number", "City", "Verified", "Projects Completed"}
 
 
-def log(msg):
-    issue_log.append(msg)
-    print(msg)
+def detect_source_type(path):
+    """The 3 known source formats have entirely disjoint, fixed column
+    sets, and the cleaning functions below are written against those
+    exact column names -- so identifying a file's type from its header
+    row (rather than requiring the caller to say which is which) is
+    both reliable and necessary. A file whose header doesn't exactly
+    match one of the 3 known schemas is reported, not guessed at."""
+    with open(path, newline="") as f:
+        header = next(csv.reader(f), [])
+    cols = {c.strip() for c in header}
+    if cols == SOURCE1_COLUMNS:
+        return "source1"
+    if cols == SOURCE2_COLUMNS:
+        return "source2"
+    if cols == SOURCE3_COLUMNS:
+        return "source3"
+    return None
 
 
 # ---------------------------------------------------------------------
 # source1: naukri applicants
 # ---------------------------------------------------------------------
 
-def clean_source1(path):
+def clean_source1(path, log_list):
+    def log(msg):
+        log_list.append(msg)
+        print(msg)
+
     df = pd.read_csv(path, dtype=str, keep_default_na=False)
     df = df[df["Full Name"].str.strip() != ""].copy()
 
@@ -102,7 +134,11 @@ def clean_source1(path):
 # source2: gig workers
 # ---------------------------------------------------------------------
 
-def clean_source2(path):
+def clean_source2(path, log_list):
+    def log(msg):
+        log_list.append(msg)
+        print(msg)
+
     df = pd.read_csv(path, dtype=str, keep_default_na=False,
                       header=0, names=["email_id", "worker_name", "rate",
                                         "location", "status", "skill_tags"])
@@ -170,7 +206,11 @@ def clean_source2(path):
 # source3: CBNexus contacts
 # ---------------------------------------------------------------------
 
-def clean_source3(path):
+def clean_source3(path, log_list):
+    def log(msg):
+        log_list.append(msg)
+        print(msg)
+
     df = pd.read_csv(path, dtype=str, keep_default_na=False)
 
     before = len(df)
@@ -212,11 +252,16 @@ class PersonRegistry:
     solved here by chaining through source1, which has both.
     """
 
-    def __init__(self):
+    def __init__(self, log_list):
+        self.log_list = log_list
         self.people = {}          # person_id -> dict
         self.phone_index = {}     # normalized phone -> person_id
         self.email_index = {}     # normalized email -> person_id
         self._next_id = 1
+
+    def _log(self, msg):
+        self.log_list.append(msg)
+        print(msg)
 
     def resolve(self, phone, email):
         candidates = set()
@@ -233,10 +278,10 @@ class PersonRegistry:
             # Phone matched one existing person, email matched a
             # *different* one -- a genuine conflict. Don't silently pick
             # a side; keep them separate and flag it.
-            log(f"[match] CONFLICT: phone {phone!r} and email {email!r} "
-                f"point to different existing persons {candidates} for "
-                f"row {full_name!r} ({source_system}) -- kept unmerged, "
-                f"flagged for review")
+            self._log(f"[match] CONFLICT: phone {phone!r} and email {email!r} "
+                       f"point to different existing persons {candidates} for "
+                       f"row {full_name!r} ({source_system}) -- kept unmerged, "
+                       f"flagged for review")
             return self._create(full_name, phone, email, city, source_system)
 
         if len(candidates) == 1:
@@ -297,18 +342,108 @@ class PersonRegistry:
         return flags
 
 
+def load_existing_registry(conn, log_list):
+    """Reconstructs a PersonRegistry from the current persons table, so
+    new rows (e.g. from a freshly-uploaded CSV) can be matched against
+    already-existing people instead of every run starting from zero.
+    Used by run_merge(..., fresh=False) -- the incremental path the
+    Upload & Merge UI uses, which must NOT wipe out Task 2's
+    skill_category tags or Task 3's audio_submissions the way a full
+    rebuild would."""
+    registry = PersonRegistry(log_list)
+    with conn.cursor() as cur:
+        cur.execute("SELECT person_id, full_name, email, phone, city, "
+                     "source_systems FROM persons")
+        rows = cur.fetchall()
+    max_id = 0
+    for r in rows:
+        pid = r["person_id"]
+        registry.people[pid] = {
+            "person_id": pid,
+            "full_name": r["full_name"],
+            "phone": r["phone"],
+            "email": r["email"],
+            "city": r["city"],
+            "source_systems": set((r["source_systems"] or "").split(",")) - {""},
+        }
+        if r["phone"]:
+            registry.phone_index.setdefault(r["phone"], pid)
+        if r["email"]:
+            registry.email_index.setdefault(r["email"], pid)
+        max_id = max(max_id, pid)
+    registry._next_id = max_id + 1
+    return registry
+
+
 # ---------------------------------------------------------------------
-# main
+# run_merge -- the single source of truth for cleaning + matching +
+# writing to MySQL, used by both the CLI (fresh=True, full rebuild) and
+# the Upload & Merge Streamlit page (fresh=False, incremental).
 # ---------------------------------------------------------------------
 
-def main():
-    log("=== Task 1: merge pipeline starting ===")
+def run_merge(file_paths, fresh=False):
+    """Cleans and merges the given CSV files into the persons table.
 
-    s1 = clean_source1(SRC1_PATH)
-    s2 = clean_source2(SRC2_PATH)
-    s3 = clean_source3(SRC3_PATH)
+    fresh=True  (CLI default): drops and rebuilds every table from
+        scratch, processing exactly the given files. This is the
+        original, unchanged pipeline/merge.py behavior.
+    fresh=False (UI path): loads the *existing* persons table first, so
+        new files are matched against people who are already there
+        (including ones with a skill_category or audio_submissions
+        already attached), and only genuinely new persons/detail rows
+        are inserted -- nothing is dropped, nothing is duplicated.
 
-    registry = PersonRegistry()
+    Returns a summary dict with the same counts the CLI prints, plus
+    the full log list, so a caller (CLI or Streamlit) can present it
+    however it likes.
+    """
+    log_list = []
+
+    def log(msg):
+        log_list.append(msg)
+        print(msg)
+
+    log(f"=== run_merge starting ({'fresh rebuild' if fresh else 'incremental'}) ===")
+
+    s1_frames, s2_frames, s3_frames = [], [], []
+    unrecognized = []
+    for path in file_paths:
+        kind = detect_source_type(path)
+        if kind == "source1":
+            s1_frames.append(clean_source1(path, log_list))
+        elif kind == "source2":
+            s2_frames.append(clean_source2(path, log_list))
+        elif kind == "source3":
+            s3_frames.append(clean_source3(path, log_list))
+        else:
+            unrecognized.append(path)
+            log(f"[run_merge] unrecognized column schema, skipped: {path}")
+
+    empty1 = pd.DataFrame(columns=["Full Name", "Email", "Phone", "City",
+                                    "Experience (Years)", "Current CTC",
+                                    "Applied Date", "Skills", "phone_norm",
+                                    "email_norm", "city_norm", "applied_date_norm",
+                                    "ctc_annual_inr", "ctc_was_lakhs"])
+    empty2 = pd.DataFrame(columns=["email_id", "worker_name", "rate", "location",
+                                    "status", "skill_tags", "email_norm",
+                                    "location_norm", "status_norm", "rate_inr_per_hour"])
+    empty3 = pd.DataFrame(columns=["Name", "Phone Number", "City", "Verified",
+                                    "Projects Completed", "phone_norm", "city_norm",
+                                    "verified_norm", "projects_completed_norm"])
+
+    s1 = pd.concat(s1_frames, ignore_index=True) if s1_frames else empty1
+    s2 = pd.concat(s2_frames, ignore_index=True) if s2_frames else empty2
+    s3 = pd.concat(s3_frames, ignore_index=True) if s3_frames else empty3
+
+    conn = get_connection()
+    if fresh:
+        init_schema(conn)
+        registry = PersonRegistry(log_list)
+        existing_ids = set()
+    else:
+        registry = load_existing_registry(conn, log_list)
+        existing_ids = set(registry.people.keys())
+
     applicant_rows = []
     gig_rows = []
     cbnexus_rows = []
@@ -361,18 +496,52 @@ def main():
             f"unmerged person records with no common phone/email to confirm "
             f"they're the same person -- kept separate. {details}")
 
-    # --- write everything to MySQL ---
-    init_schema()
-    conn = get_connection()
     cur = conn.cursor()
 
-    for pid, p in sorted(registry.people.items()):
-        cur.execute(
-            "INSERT INTO persons (person_id, full_name, email, phone, city, "
-            "source_systems) VALUES (%s, %s, %s, %s, %s, %s)",
-            (p["person_id"], p["full_name"], p["email"], p["phone"], p["city"],
-             ",".join(sorted(p["source_systems"]))),
-        )
+    if fresh:
+        for pid, p in sorted(registry.people.items()):
+            cur.execute(
+                "INSERT INTO persons (person_id, full_name, email, phone, city, "
+                "source_systems) VALUES (%s, %s, %s, %s, %s, %s)",
+                (p["person_id"], p["full_name"], p["email"], p["phone"], p["city"],
+                 ",".join(sorted(p["source_systems"]))),
+            )
+    else:
+        # incremental: INSERT genuinely new persons, UPDATE ones that
+        # already existed (their source_systems/phone/email/city may
+        # have picked up new info from this run's files).
+        for pid, p in sorted(registry.people.items()):
+            if pid in existing_ids:
+                cur.execute(
+                    "UPDATE persons SET full_name=%s, email=%s, phone=%s, "
+                    "city=%s, source_systems=%s WHERE person_id=%s",
+                    (p["full_name"], p["email"], p["phone"], p["city"],
+                     ",".join(sorted(p["source_systems"])), pid),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO persons (person_id, full_name, email, phone, "
+                    "city, source_systems) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (p["person_id"], p["full_name"], p["email"], p["phone"],
+                     p["city"], ",".join(sorted(p["source_systems"]))),
+                )
+
+        # Avoid duplicate detail rows if a file covering an
+        # already-recorded person (e.g. re-uploading a seed CSV) is
+        # processed again -- keep the first-seen detail row per person
+        # per source, same "don't overwrite" spirit as the rest of the
+        # pipeline.
+        def already_covered(table):
+            with conn.cursor() as c:
+                c.execute(f"SELECT DISTINCT person_id FROM {table}")
+                return {row["person_id"] for row in c.fetchall()}
+
+        covered_applicant = already_covered("applicant_details")
+        covered_gig = already_covered("gig_worker_details")
+        covered_cbnexus = already_covered("cbnexus_contacts")
+        applicant_rows = [r for r in applicant_rows if r["person_id"] not in covered_applicant]
+        gig_rows = [r for r in gig_rows if r["person_id"] not in covered_gig]
+        cbnexus_rows = [r for r in cbnexus_rows if r["person_id"] not in covered_cbnexus]
 
     if applicant_rows:
         cur.executemany(
@@ -398,34 +567,95 @@ def main():
             cbnexus_rows,
         )
 
-    for name, pids, details in same_name_flags:
-        cur.execute(
-            "INSERT INTO match_flags (issue_type, description, person_ids, "
-            "source_file) VALUES (%s, %s, %s, %s)",
-            ("ambiguous_same_name",
-             f"'{name}' shared by {len(pids)} unmerged records with no common "
-             f"phone/email: " + "; ".join(details),
-             ",".join(str(p) for p in pids),
-             "source1/source2/source3"),
-        )
+    if fresh:
+        for name, pids, details in same_name_flags:
+            cur.execute(
+                "INSERT INTO match_flags (issue_type, description, person_ids, "
+                "source_file) VALUES (%s, %s, %s, %s)",
+                ("ambiguous_same_name",
+                 f"'{name}' shared by {len(pids)} unmerged records with no common "
+                 f"phone/email: " + "; ".join(details),
+                 ",".join(str(p) for p in pids),
+                 "source1/source2/source3"),
+            )
+    else:
+        # Only flag conflicts involving a person touched by *this* run
+        # (a newly created person, or one whose data just changed) --
+        # otherwise re-running with the seed files included would
+        # re-flag the same 6 known ambiguous cases every time.
+        touched_ids = {r["person_id"] for r in applicant_rows} | \
+                      {r["person_id"] for r in gig_rows} | \
+                      {r["person_id"] for r in cbnexus_rows} | \
+                      (set(registry.people.keys()) - existing_ids)
+        with conn.cursor() as c:
+            c.execute("SELECT person_ids FROM match_flags")
+            already_flagged = {row["person_ids"] for row in c.fetchall()}
+        for name, pids, details in same_name_flags:
+            key = ",".join(str(p) for p in pids)
+            if key in already_flagged:
+                continue
+            if not (set(pids) & touched_ids):
+                continue
+            cur.execute(
+                "INSERT INTO match_flags (issue_type, description, person_ids, "
+                "source_file) VALUES (%s, %s, %s, %s)",
+                ("ambiguous_same_name",
+                 f"'{name}' shared by {len(pids)} unmerged records with no common "
+                 f"phone/email: " + "; ".join(details),
+                 key, "uploaded_files"),
+            )
 
     conn.commit()
 
-    # --- summary ---
     n_people = len(registry.people)
     n_multi_source = sum(1 for p in registry.people.values() if len(p["source_systems"]) > 1)
     n_triple_source = sum(1 for p in registry.people.values() if len(p["source_systems"]) == 3)
 
-    print()
-    log(f"=== DONE: {n_people} unique people created in {DB_PATH}")
-    log(f"    - present in >1 source file: {n_multi_source}")
-    log(f"    - present in all 3 source files: {n_triple_source}")
-    log(f"    - source1 rows -> {len(s1)}, source2 rows -> {len(s2)}, "
-        f"source3 rows -> {len(s3)}")
-    log(f"    - ambiguous same-name flags written to match_flags: {len(same_name_flags)}")
+    with conn.cursor() as c:
+        c.execute("SELECT COUNT(*) c FROM match_flags")
+        total_flags = c.fetchone()["c"]
 
-    # Sanity check: a few people we know from manual inspection should
-    # have merged across all 3 files.
+    conn.close()
+
+    log(f"=== run_merge done: {n_people} total people in DB "
+        f"({'fresh' if fresh else 'incremental'}) ===")
+
+    return {
+        "fresh": fresh,
+        "total_people": n_people,
+        "multi_source_count": n_multi_source,
+        "triple_source_count": n_triple_source,
+        "source1_rows": len(s1),
+        "source2_rows": len(s2),
+        "source3_rows": len(s3),
+        "new_ambiguous_flags_this_run": len(same_name_flags) if fresh else None,
+        "total_ambiguous_flags": total_flags,
+        "unrecognized_files": unrecognized,
+        "log": log_list,
+    }
+
+
+# ---------------------------------------------------------------------
+# CLI entry point -- unchanged behavior: full rebuild from the 3 seed
+# CSVs, with the same sanity-check output as always.
+# ---------------------------------------------------------------------
+
+def main():
+    result = run_merge(SEED_PATHS, fresh=True)
+
+    print()
+    print(f"=== DONE: {result['total_people']} unique people created in {DB_PATH}")
+    print(f"    - present in >1 source file: {result['multi_source_count']}")
+    print(f"    - present in all 3 source files: {result['triple_source_count']}")
+    print(f"    - source1 rows -> {result['source1_rows']}, "
+          f"source2 rows -> {result['source2_rows']}, "
+          f"source3 rows -> {result['source3_rows']}")
+    print(f"    - ambiguous same-name flags written to match_flags: "
+          f"{result['total_ambiguous_flags']}")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
     print("\n=== Sanity check: known cross-source merges ===")
     for name in ["Rahul Chopra", "Tanvi Gupta", "Vikram Saxena", "Varun Saxena"]:
         cur.execute(

@@ -11,6 +11,7 @@ DROP TABLE IF EXISTS cbnexus_contacts;
 DROP TABLE IF EXISTS gig_worker_details;
 DROP TABLE IF EXISTS applicant_details;
 DROP TABLE IF EXISTS persons;
+DROP TABLE IF EXISTS uploaded_files;
 SET FOREIGN_KEY_CHECKS = 1;
 
 CREATE TABLE persons (
@@ -77,6 +78,18 @@ CREATE TABLE match_flags (
     source_file   VARCHAR(100),
     raw_row       TEXT,
     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Task 1 (Upload & Merge UI): tracks CSVs uploaded through the
+-- Streamlit page, separate from the 3 original seed files in data/
+-- (which aren't "uploads" and aren't tracked here).
+CREATE TABLE uploaded_files (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    original_filename   VARCHAR(255) NOT NULL,
+    stored_path         VARCHAR(500) NOT NULL,
+    uploaded_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    row_count           INT,
+    status              VARCHAR(20) NOT NULL DEFAULT 'pending'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Task 3: audio collection app submissions
