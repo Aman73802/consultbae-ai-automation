@@ -2,10 +2,11 @@
 
 n8n needs somewhere to (a) read each person's skills from and (b) write
 the LLM-classified skill_category back to. Rather than requiring a
-SQLite community node in n8n (extra install, inconsistent availability
+MySQL community node in n8n (extra install, inconsistent availability
 across n8n setups), this exposes two plain HTTP endpoints backed by the
-same db/consultbae.db that Task 1 built and Task 3 writes to -- so the
-n8n HTTP Request nodes work against any standard n8n install.
+same "consultbae" MySQL database that Task 1 built and Task 3 writes
+to -- so the n8n HTTP Request nodes work against any standard n8n
+install.
 
 Run with:  python3 automation/api_server.py
 Then:      http://localhost:5001/api/people
@@ -41,7 +42,13 @@ def combined_skills(row):
 
 @app.get("/health")
 def health():
-    return jsonify({"status": "ok", "db": DB_PATH, "db_exists": os.path.exists(DB_PATH)})
+    ok = True
+    try:
+        conn = get_connection()
+        conn.close()
+    except Exception:
+        ok = False
+    return jsonify({"status": "ok" if ok else "db unreachable", "db": DB_PATH})
 
 
 @app.get("/api/people")
@@ -55,13 +62,15 @@ def list_people():
     """
     include_tagged = request.args.get("all") == "1"
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT p.person_id, p.full_name, p.skill_category, "
-        "a.skills_raw AS naukri_skills, g.skills_raw AS gig_skills "
-        "FROM persons p "
-        "LEFT JOIN applicant_details a ON a.person_id = p.person_id "
-        "LEFT JOIN gig_worker_details g ON g.person_id = p.person_id"
-    ).fetchall()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT p.person_id, p.full_name, p.skill_category, "
+            "a.skills_raw AS naukri_skills, g.skills_raw AS gig_skills "
+            "FROM persons p "
+            "LEFT JOIN applicant_details a ON a.person_id = p.person_id "
+            "LEFT JOIN gig_worker_details g ON g.person_id = p.person_id"
+        )
+        rows = cur.fetchall()
     conn.close()
 
     people = []
@@ -89,20 +98,25 @@ def set_skill_category(person_id):
         }), 400
 
     conn = get_connection()
-    cur = conn.execute("SELECT person_id FROM persons WHERE person_id = ?", (person_id,))
-    if cur.fetchone() is None:
-        conn.close()
-        return jsonify({"error": f"no person with person_id={person_id}"}), 404
+    with conn.cursor() as cur:
+        cur.execute("SELECT person_id FROM persons WHERE person_id = %s", (person_id,))
+        if cur.fetchone() is None:
+            conn.close()
+            return jsonify({"error": f"no person with person_id={person_id}"}), 404
 
-    conn.execute("UPDATE persons SET skill_category = ? WHERE person_id = ?",
-                 (category, person_id))
+        cur.execute("UPDATE persons SET skill_category = %s WHERE person_id = %s",
+                    (category, person_id))
     conn.commit()
     conn.close()
     return jsonify({"person_id": person_id, "skill_category": category})
 
 
 if __name__ == "__main__":
-    if not os.path.exists(DB_PATH):
-        print(f"No DB found at {DB_PATH} -- run pipeline/merge.py first.")
+    try:
+        get_connection().close()
+    except Exception as e:
+        print(f"Could not connect to MySQL ({DB_PATH}): {e}\n"
+              f"Make sure the local MySQL server is running and "
+              f"pipeline/merge.py has been run at least once.")
         sys.exit(1)
     app.run(host="0.0.0.0", port=5001, debug=True)

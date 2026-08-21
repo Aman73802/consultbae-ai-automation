@@ -22,18 +22,23 @@ OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "people_expo
 
 
 def main():
-    if not os.path.exists(DB_PATH):
-        print(f"No DB found at {DB_PATH} -- run pipeline/merge.py first.")
+    try:
+        conn = get_connection()
+    except Exception as e:
+        print(f"Could not connect to MySQL ({DB_PATH}): {e}\n"
+              f"Make sure the local MySQL server is running and "
+              f"pipeline/merge.py has been run at least once.")
         sys.exit(1)
 
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT p.person_id, p.full_name, p.skill_category, "
-        "a.skills_raw AS naukri_skills, g.skills_raw AS gig_skills "
-        "FROM persons p "
-        "LEFT JOIN applicant_details a ON a.person_id = p.person_id "
-        "LEFT JOIN gig_worker_details g ON g.person_id = p.person_id"
-    ).fetchall()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT p.person_id, p.full_name, p.skill_category, "
+            "a.skills_raw AS naukri_skills, g.skills_raw AS gig_skills "
+            "FROM persons p "
+            "LEFT JOIN applicant_details a ON a.person_id = p.person_id "
+            "LEFT JOIN gig_worker_details g ON g.person_id = p.person_id"
+        )
+        rows = cur.fetchall()
     conn.close()
 
     people = []

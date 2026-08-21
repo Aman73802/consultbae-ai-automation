@@ -3,7 +3,9 @@
 Reads the three messy source CSVs, cleans each one, resolves person
 identity across all three (no single ID is common to all of them: source1
 and source2 share email, source3 has no email at all and must be matched
-by phone), and loads everything into db/consultbae.db.
+by phone), and loads everything into the MySQL "consultbae" database
+(see common/db.py for connection settings; run a local MySQL server
+first -- see README "Setup").
 
 Run with:  python3 pipeline/merge.py
 """
@@ -359,7 +361,7 @@ def main():
             f"unmerged person records with no common phone/email to confirm "
             f"they're the same person -- kept separate. {details}")
 
-    # --- write everything to SQLite ---
+    # --- write everything to MySQL ---
     init_schema()
     conn = get_connection()
     cur = conn.cursor()
@@ -367,36 +369,39 @@ def main():
     for pid, p in sorted(registry.people.items()):
         cur.execute(
             "INSERT INTO persons (person_id, full_name, email, phone, city, "
-            "source_systems) VALUES (?, ?, ?, ?, ?, ?)",
+            "source_systems) VALUES (%s, %s, %s, %s, %s, %s)",
             (p["person_id"], p["full_name"], p["email"], p["phone"], p["city"],
              ",".join(sorted(p["source_systems"]))),
         )
 
-    cur.executemany(
-        "INSERT INTO applicant_details (person_id, experience_years, ctc_raw, "
-        "ctc_annual_inr, ctc_was_lakhs, applied_date_raw, applied_date, "
-        "skills_raw, city_raw) VALUES (:person_id, :experience_years, :ctc_raw, "
-        ":ctc_annual_inr, :ctc_was_lakhs, :applied_date_raw, :applied_date, "
-        ":skills_raw, :city_raw)",
-        applicant_rows,
-    )
-    cur.executemany(
-        "INSERT INTO gig_worker_details (person_id, rate_raw, rate_inr_per_hour, "
-        "status, skills_raw, location_raw) VALUES (:person_id, :rate_raw, "
-        ":rate_inr_per_hour, :status, :skills_raw, :location_raw)",
-        gig_rows,
-    )
-    cur.executemany(
-        "INSERT INTO cbnexus_contacts (person_id, verified, verified_raw, "
-        "projects_completed, city_raw) VALUES (:person_id, :verified, "
-        ":verified_raw, :projects_completed, :city_raw)",
-        cbnexus_rows,
-    )
+    if applicant_rows:
+        cur.executemany(
+            "INSERT INTO applicant_details (person_id, experience_years, ctc_raw, "
+            "ctc_annual_inr, ctc_was_lakhs, applied_date_raw, applied_date, "
+            "skills_raw, city_raw) VALUES (%(person_id)s, %(experience_years)s, "
+            "%(ctc_raw)s, %(ctc_annual_inr)s, %(ctc_was_lakhs)s, %(applied_date_raw)s, "
+            "%(applied_date)s, %(skills_raw)s, %(city_raw)s)",
+            applicant_rows,
+        )
+    if gig_rows:
+        cur.executemany(
+            "INSERT INTO gig_worker_details (person_id, rate_raw, rate_inr_per_hour, "
+            "status, skills_raw, location_raw) VALUES (%(person_id)s, %(rate_raw)s, "
+            "%(rate_inr_per_hour)s, %(status)s, %(skills_raw)s, %(location_raw)s)",
+            gig_rows,
+        )
+    if cbnexus_rows:
+        cur.executemany(
+            "INSERT INTO cbnexus_contacts (person_id, verified, verified_raw, "
+            "projects_completed, city_raw) VALUES (%(person_id)s, %(verified)s, "
+            "%(verified_raw)s, %(projects_completed)s, %(city_raw)s)",
+            cbnexus_rows,
+        )
 
     for name, pids, details in same_name_flags:
         cur.execute(
             "INSERT INTO match_flags (issue_type, description, person_ids, "
-            "source_file) VALUES (?, ?, ?, ?)",
+            "source_file) VALUES (%s, %s, %s, %s)",
             ("ambiguous_same_name",
              f"'{name}' shared by {len(pids)} unmerged records with no common "
              f"phone/email: " + "; ".join(details),
@@ -425,7 +430,7 @@ def main():
     for name in ["Rahul Chopra", "Tanvi Gupta", "Vikram Saxena", "Varun Saxena"]:
         cur.execute(
             "SELECT person_id, full_name, email, phone, city, source_systems "
-            "FROM persons WHERE full_name = ?", (name,))
+            "FROM persons WHERE full_name = %s", (name,))
         row = cur.fetchone()
         if row:
             print(f"  {dict(row)}")

@@ -11,14 +11,16 @@ middle three nodes once per person automatically (that's default n8n
 behavior whenever a node receives multiple input items — no loop node
 needed).
 
-## Why a local API instead of an n8n SQLite node
+## Why a local API instead of an n8n MySQL node
 
-n8n's SQLite support depends on a community node that isn't installed by
-default on every n8n instance. Instead, `automation/api_server.py` is a
-tiny Flask app that reads/writes the exact same `db/consultbae.db` that
-Task 1 built and Task 3 writes to, over plain HTTP — works against any
-stock n8n install (cloud or self-hosted) with just the built-in HTTP
-Request node.
+n8n does have a MySQL node, but it needs credentials configured inside
+n8n and doesn't give you a place to run the "combine + dedupe skill
+tags from two different tables" logic `combined_skills()` does. Instead,
+`automation/api_server.py` is a tiny Flask app that reads/writes the
+exact same `consultbae` MySQL database that Task 1 built and Task 3
+writes to, over plain HTTP — works against any stock n8n install (cloud
+or self-hosted) with just the built-in HTTP Request node, no n8n-side
+DB credentials needed at all.
 
 ## 1. Start the supporting API
 
@@ -26,7 +28,8 @@ From the repo root, with the venv active:
 
 ```bash
 pip install -r requirements.txt      # if you haven't already
-python3 pipeline/merge.py            # make sure db/consultbae.db exists
+bash db/start_mysql.sh               # start the local MySQL server (see main README)
+python3 pipeline/merge.py            # make sure the consultbae DB exists
 python3 automation/api_server.py     # serves on http://localhost:5001
 ```
 
@@ -89,7 +92,9 @@ is safe/idempotent — anyone already tagged is excluded from the next
 Verify the result landed in the DB:
 
 ```bash
-sqlite3 db/consultbae.db "SELECT person_id, full_name, skill_category FROM persons WHERE skill_category IS NOT NULL LIMIT 10;"
+.mysql-local/mysql-9.1.0-macos14-arm64/bin/mysql -uconsultbae -pconsultbae_dev_pw \
+  --socket=.mysql-local/mysql.sock consultbae \
+  -e "SELECT person_id, full_name, skill_category FROM persons WHERE skill_category IS NOT NULL LIMIT 10;"
 ```
 
 ## Design notes / judgment calls

@@ -1,6 +1,6 @@
 # ConsultBae — AI Automation Take-Home
 
-Merges 3 messy source systems into one SQLite database, tags people's
+Merges 3 messy source systems into one MySQL database, tags people's
 skills via an n8n + LLM automation, and collects audio submissions
 through a small Streamlit app that writes back into the same database.
 
@@ -9,7 +9,9 @@ through a small Streamlit app that writes back into the same database.
 ```
 data/                    the 3 source CSVs, + data/audio/ (uploaded recordings)
 common/                  shared code: db.py (connection/schema), normalize.py (cleaning rules)
-db/schema.sql            the SQLite schema
+db/schema.sql            the MySQL schema
+db/start_mysql.sh        starts a local, self-contained MySQL server (no brew/sudo needed)
+db/stop_mysql.sh         stops it
 pipeline/merge.py        Task 1 — the merge pipeline
 app/                     Task 3 — the Streamlit audio collection app
 automation/              Task 2 — n8n workflow JSON + the Flask API it calls
@@ -18,14 +20,26 @@ automation/              Task 2 — n8n workflow JSON + the Flask API it calls
 ## Setup
 
 Requires Python 3.9+. ffmpeg is **not** a separate system requirement —
-`static-ffmpeg` (in requirements.txt) bundles a static binary, so
-`pip install` is the only setup step.
+`static-ffmpeg` (in requirements.txt) bundles a static binary. MySQL
+also doesn't need a system install: `db/start_mysql.sh` downloads the
+official MySQL Community Server tarball into `.mysql-local/` (gitignored,
+~500MB) on first run and starts it as your normal user — no Homebrew, no
+sudo. (If you already have MySQL running some other way — Homebrew,
+Docker, a managed instance — skip this script and just set the
+`MYSQL_HOST`/`MYSQL_PORT`/`MYSQL_USER`/`MYSQL_PASSWORD`/`MYSQL_DATABASE`
+env vars from `common/db.py` to point at it instead, then create an
+empty database with that name.)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+bash db/start_mysql.sh           # first run downloads MySQL; later runs just start it
 ```
+
+`bash db/stop_mysql.sh` stops it when you're done. `db/start_mysql.sh`
+is idempotent — it detects an already-initialized data dir / an
+already-running server and skips straight to "ready."
 
 ## Run — Task 1 (merge)
 
@@ -34,13 +48,13 @@ python3 pipeline/merge.py
 ```
 
 Reads all 3 CSVs from `data/`, cleans and de-duplicates them, resolves
-identity across files, and (re)builds `db/consultbae.db` from scratch
-(the script drops and recreates all tables every run, so it's safe to
-re-run any time). It prints a running log of every cleaning/matching
-decision, then a summary:
+identity across files, and (re)builds the `consultbae` MySQL database
+from scratch (the script drops and recreates all tables every run, so
+it's safe to re-run any time). It prints a running log of every
+cleaning/matching decision, then a summary:
 
 ```
-=== DONE: 60 unique people created in db/consultbae.db
+=== DONE: 60 unique people created in mysql://consultbae@127.0.0.1:3306/consultbae
     - present in >1 source file: 25
     - present in all 3 source files: 15
     - source1 rows -> 40, source2 rows -> 30, source3 rows -> 30
@@ -51,12 +65,10 @@ decision, then a summary:
   ...
 ```
 
-`db/consultbae.db` isn't committed (it's a build artifact, regenerated
-by this script) — `.gitignore` excludes it.
-
 ## Run — Task 3 (audio app)
 
 ```bash
+bash db/start_mysql.sh           # if it isn't already running
 python3 pipeline/merge.py        # if you haven't already, to create the DB
 streamlit run app/streamlit_app.py
 ```
@@ -162,13 +174,19 @@ generic checklist).
 No code, thinking through what breaks first if this exact audio app
 went from a demo to 5,000 concurrent submissions:
 
-**What breaks first — SQLite.** A single-file SQLite database with the
-app's default connection handling allows exactly one writer at a time;
-under concurrent submissions from thousands of phones on a Saturday
-night, `INSERT`s into `audio_submissions` (and creating any new
-`persons` row) will start hitting `database is locked` errors within
-minutes, not hours. This is the actual first failure, ahead of any
-capacity/cost concern.
+**What breaks first — the single, un-pooled MySQL instance.** MySQL/InnoDB
+handles concurrent *writes* fine (row-level locking, unlike SQLite's
+single-writer lock) — that's not the first failure here. The actual
+first failure is connections: `common/db.py` opens a brand-new MySQL
+connection per request (`get_connection()` on every submit/list call),
+and this project's local dev server runs on default settings
+(`max_connections` ≈ 151, one machine, one disk, no replica). A Saturday
+night burst of thousands of concurrent Streamlit sessions each opening
+their own connection exhausts that ceiling in seconds, well before disk
+or CPU becomes the bottleneck. The fix isn't "use a different database"
+this time — it's connection pooling (PgBouncer-style, or MySQL's own
+connection pool) sitting between the app and the DB, plus a managed,
+properly-sized instance instead of a laptop-grade single node.
 
 **Storage.** Audio files saved to local disk (`data/audio/`) on a single
 Streamlit process don't survive a redeploy or scale past one instance,
@@ -176,7 +194,7 @@ and local disk on most free/cheap hosting tiers is small and ephemeral.
 Needs object storage (S3/Cloudflare R2/GCS) from day one, with the app
 storing a URL/key in the DB instead of a local path.
 
-**Concurrent uploads.** Beyond the SQLite write-lock issue: audio
+**Concurrent uploads.** Beyond the connection-pooling issue above: audio
 extraction (`pydub`/ffmpeg decode) is CPU-bound and currently runs
 synchronously inside the request/response cycle — one slow decode
 blocks that user's submission, and a burst of simultaneous submissions
@@ -208,10 +226,11 @@ load, that capacity sits idle Monday–Friday. A queue-based worker that
 scales to zero between bursts (or a serverless function per job) is the
 right shape, not a bigger single server.
 
-**What I'd change before launch, in priority order:** (1) move off
-SQLite to Postgres (handles concurrent writes; this is the one that
-turns into a Saturday-night outage otherwise), (2) move audio storage to
-S3/R2 with the DB holding references, (3) decouple upload-accept from
+**What I'd change before launch, in priority order:** (1) put a
+connection pool (or a managed MySQL instance with proper connection
+limits) between the app and the DB — this is the one that turns into a
+Saturday-night outage otherwise, (2) move audio storage to S3/R2 with
+the DB holding references, (3) decouple upload-accept from
 property-extraction via a job queue, (4) add an idempotency key to stop
 duplicate submissions, (5) basic rate limiting per phone number to blunt
 either accidental retry storms or abuse.
@@ -243,21 +262,41 @@ goes wrong once and can't be taken back. `git reset` first (safe — no
 commit had happened yet), then `git init` inside the project folder, and
 I checked `git status` myself before anything got committed.
 
-**2. ffmpeg wouldn't install because Homebrew itself was broken.**
-`pydub` (used for audio property extraction in Task 3) needs ffmpeg.
-`brew install ffmpeg` failed with `/usr/local/Homebrew is not writable`
-— Homebrew's own directories weren't owned by my user, most likely left
-over from a `sudo brew` command at some point in the past. The fix
-Homebrew itself suggests is `sudo chown -R <user> /usr/local/Homebrew
-...`. I was asked to choose between running that (fixes Homebrew
-properly, but it's a sudo system change) or having Claude pull in
-`static-ffmpeg`, a PyPI package that bundles a static ffmpeg+ffprobe
-binary with no system install or sudo needed. I picked the pip package
-— partly to avoid a sudo change on my machine mid-assignment without
-being able to fully verify why Homebrew ended up in that state, and
-partly because it's objectively the better dependency for a submission
-someone else has to clone and run: `pip install -r requirements.txt` and
-ffmpeg is just there, no "install Homebrew first" step in the README.
+**2. Homebrew was broken, and it blocked two separate dependencies
+(ffmpeg, then MySQL).** First hit with ffmpeg: `pydub` (used for audio
+property extraction in Task 3) needs it, and `brew install ffmpeg`
+failed with `/usr/local/Homebrew is not writable` — Homebrew's own
+directories weren't owned by my user, most likely left over from a
+`sudo brew` command at some point in the past. The fix Homebrew itself
+suggests is `sudo chown -R <user> /usr/local/Homebrew ...`. I was asked
+to choose between running that (fixes Homebrew properly, but it's a
+sudo system change) or pulling in `static-ffmpeg`, a PyPI package that
+bundles a static ffmpeg+ffprobe binary with no system install or sudo
+needed. I picked the pip package — partly to avoid a sudo change on my
+machine mid-assignment without being able to fully verify why Homebrew
+ended up in that state, partly because it's objectively the better
+dependency for a submission someone else has to clone and run: `pip
+install -r requirements.txt` and ffmpeg is just there.
+
+The same wall showed up again, harder, when I decided midway through to
+switch the database from SQLite to MySQL — a real rewrite of the
+schema, the connection layer, and every SQL call site in the pipeline,
+app, and API, not just a config change. There's no pip-installable
+static MySQL *server* the way there is for ffmpeg — a real server process is
+unavoidable — and Docker wasn't available either. What I searched for:
+whether MySQL's official downloads offer a plain macOS tarball, not just
+a `.dmg` installer or the Homebrew formula. They do — a compressed TAR
+archive that extracts and runs as a normal user with `--datadir`/
+`--basedir` pointed at a local folder, no root needed. I confirmed the
+exact download URL was real (checked `Content-Length`/`Content-Type` via
+`curl -I` before pulling ~160MB) rather than trusting a guessed version
+number, then wrote `db/start_mysql.sh` so this isn't a one-off manual
+sequence of commands I'd have to remember for the video — it downloads,
+initializes, and starts the server idempotently, and `db/stop_mysql.sh`
+tears it down. I rejected just fixing Homebrew with sudo a second time
+for the same reason as the first: it's a change to shared system state
+I can't fully audit the cause of, for a problem that has a clean,
+project-scoped alternative.
 
 **3. Identity matching with no field common to all 3 files.** This is
 the part of the code I spent the most time actually reading rather than

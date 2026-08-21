@@ -11,7 +11,6 @@ Run with:  streamlit run app/streamlit_app.py
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -19,7 +18,7 @@ import streamlit as st
 
 from app.audio_utils import extract_properties
 from common import normalize as norm
-from common.db import get_connection, init_schema, DB_PATH
+from common.db import get_connection, init_schema
 
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "audio")
@@ -29,25 +28,31 @@ st.set_page_config(page_title="ConsultBae Audio Collector", layout="centered")
 
 
 def ensure_db():
-    if not os.path.exists(DB_PATH):
-        init_schema()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM persons LIMIT 1")
+    except Exception:
+        init_schema(conn)
+    finally:
+        conn.close()
 
 
 def find_or_create_person(conn, name, phone_norm):
     cur = conn.cursor()
-    cur.execute("SELECT person_id, source_systems FROM persons WHERE phone = ?", (phone_norm,))
+    cur.execute("SELECT person_id, source_systems FROM persons WHERE phone = %s", (phone_norm,))
     row = cur.fetchone()
     if row:
         sources = set(row["source_systems"].split(",")) if row["source_systems"] else set()
         if "audio_app" not in sources:
             sources.add("audio_app")
-            cur.execute("UPDATE persons SET source_systems = ? WHERE person_id = ?",
+            cur.execute("UPDATE persons SET source_systems = %s WHERE person_id = %s",
                         (",".join(sorted(sources)), row["person_id"]))
             conn.commit()
         return row["person_id"], False
     cur.execute(
         "INSERT INTO persons (full_name, email, phone, city, source_systems) "
-        "VALUES (?, NULL, ?, NULL, 'audio_app')",
+        "VALUES (%s, NULL, %s, NULL, 'audio_app')",
         (norm.display_name(name), phone_norm),
     )
     conn.commit()
@@ -104,17 +109,17 @@ def page_submit():
             conn = get_connection()
             person_id, created = find_or_create_person(conn, name, phone_norm)
 
-            conn.execute(
-                "INSERT INTO audio_submissions (person_id, submitted_name, "
-                "submitted_phone, file_path, duration_sec, sample_rate_khz, "
-                "bitrate_kbps, loudness_db, silence_ratio, quality_estimate, "
-                "submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (person_id, norm.display_name(name), phone_norm, file_path,
-                 props["duration_sec"], props["sample_rate_khz"],
-                 props["bitrate_kbps"], props["loudness_db"],
-                 props["silence_ratio"], props["quality_estimate"],
-                 datetime.now(timezone.utc).isoformat()),
-            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO audio_submissions (person_id, submitted_name, "
+                    "submitted_phone, file_path, duration_sec, sample_rate_khz, "
+                    "bitrate_kbps, loudness_db, silence_ratio, quality_estimate) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (person_id, norm.display_name(name), phone_norm, file_path,
+                     props["duration_sec"], props["sample_rate_khz"],
+                     props["bitrate_kbps"], props["loudness_db"],
+                     props["silence_ratio"], props["quality_estimate"]),
+                )
             conn.commit()
             conn.close()
 
@@ -134,11 +139,13 @@ def page_submissions():
     st.title("All submissions")
     ensure_db()
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT a.*, p.full_name AS person_name, p.source_systems "
-        "FROM audio_submissions a LEFT JOIN persons p ON a.person_id = p.person_id "
-        "ORDER BY a.submitted_at DESC"
-    ).fetchall()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT a.*, p.full_name AS person_name, p.source_systems "
+            "FROM audio_submissions a LEFT JOIN persons p ON a.person_id = p.person_id "
+            "ORDER BY a.submitted_at DESC"
+        )
+        rows = cur.fetchall()
     conn.close()
 
     if not rows:
