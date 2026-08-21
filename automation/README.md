@@ -173,11 +173,20 @@ Verify the result landed in the DB:
   demo, and worth mentioning as a real production concern (real
   pipelines from LLM-classification steps need this kind of guardrail).
 - **`temperature: 0`** for repeatable classifications.
-- **One HTTP call per person** — fine at this dataset's size (~55
-  people). At real gig-worker volume (thousands), this flow would need
-  batching/rate-limit handling (a `Wait` node or n8n's built-in retry/
-  backoff options) before it's production-ready; see the Task 5 stretch
-  section in the main README for the same theme applied to the audio app.
+- **One HTTP call per person, throttled.** This was originally listed
+  here as a "fine at ~55 people, would need rate-limit handling at real
+  volume" caveat -- it turned out to bite at 55, not at thousands: fired
+  back-to-back, the run died partway through with Groq's free-tier
+  tokens-per-minute limit (`Rate limit reached ... TPM: Limit 8000`).
+  So the node now uses n8n's built-in options rather than leaving it as
+  a known-future-problem: **batching** (1 item per batch, 4000ms
+  interval, ~15 calls/min -- comfortably under an 8000 TPM ceiling at
+  ~450 tokens/call) plus **retryOnFail** (3 tries, 5s apart) so a
+  transient 429 retries instead of failing the whole run. Cost: ~55
+  people × 4s ≈ 4 minutes per full pass, which is the right trade for a
+  batch job nobody is watching live. At genuinely large volume the
+  interval should come from the provider's published limits rather than
+  this hardcoded number, and a paid tier removes the constraint entirely.
 - **Ollama over OpenAI/Anthropic**: chosen after repeatedly hitting a
   Google OAuth session error (`accounts.google.co.in/accounts/SetSID`
   returning 400) trying to sign up for either provider — a local browser/
