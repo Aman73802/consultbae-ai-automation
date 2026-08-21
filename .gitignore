@@ -10,6 +10,9 @@ __pycache__/
 # local n8n instance data (credentials, execution history) -- never committed
 .n8n-local/
 
+# local Node.js runtime (system Node was too new for n8n's native deps)
+.node-local/
+
 # audio files uploaded through the Task 3 app
 data/audio/*
 !data/audio/.gitkeep
