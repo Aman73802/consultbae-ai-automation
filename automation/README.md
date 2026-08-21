@@ -1,5 +1,29 @@
 # Task 2 — n8n skill-tagging automation
 
+## Running n8n itself locally
+
+`npx n8n start` works out of the box on most machines. If your system
+Node is very new (this happened on Node v26 here), n8n's `isolated-vm`
+native dependency can fail to compile against it -- you'll see `npm
+error` / `isolated-vm ... install { code: 1 }` in the log. Fix: run n8n
+under a Node LTS release instead (v22/v24), without touching your
+system Node:
+
+```bash
+mkdir -p .node-local && cd .node-local
+curl -L -o node.tar.gz "https://nodejs.org/dist/v24.19.0/node-v24.19.0-darwin-arm64.tar.gz"
+tar -xzf node.tar.gz
+cd ..
+export PATH="$(pwd)/.node-local/node-v24.19.0-darwin-arm64/bin:$PATH"
+node --version   # should print v24.19.0, not your system version
+N8N_USER_FOLDER="$(pwd)/.n8n-local" npx --yes n8n start
+```
+
+(Swap `darwin-arm64` for `linux-x64`/`darwin-x64`/etc. from
+https://nodejs.org/dist/v24.19.0/ if you're not on Apple Silicon macOS.)
+Once it logs `Editor is now accessible via: http://localhost:5678`,
+open that URL and continue below.
+
 **What it does:** reads every person in the Task 1 database who has skills
 data but no `skill_category` yet, sends their name + skills to an LLM to
 classify into `automation-heavy` / `web dev` / `data`, and writes the

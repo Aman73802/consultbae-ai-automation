@@ -16,6 +16,7 @@ from automation.api_server import combined_skills
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 README_PATH = os.path.join(REPO_ROOT, "README.md")
 API_BASE = "http://localhost:5001"
+N8N_BASE = "http://localhost:5678"
 
 
 def read_readme_section(start_heading, end_heading):
@@ -39,6 +40,14 @@ def check_api_health():
         return r.status_code == 200, r.json()
     except requests.exceptions.RequestException as e:
         return False, str(e)
+
+
+def check_n8n_reachable():
+    try:
+        r = requests.get(N8N_BASE, timeout=1.5)
+        return r.status_code == 200
+    except requests.exceptions.RequestException:
+        return False
 
 
 def get_stats(conn):
@@ -100,6 +109,8 @@ def page_overview(conn):
 
     st.subheader("Task 2 — n8n skill tagging")
     status_line(api_ok, f"Supporting API: {'reachable at ' + API_BASE if api_ok else 'not running -- start it (see Task 2 tab)'}")
+    n8n_ok = check_n8n_reachable()
+    status_line(n8n_ok, f"n8n editor: {'reachable at ' + N8N_BASE if n8n_ok else 'not running -- see Task 2 tab'}")
     if stats["tagged_count"] > 0:
         status_line(True, f"**{stats['tagged_count']}/{len(stats['taggable_people'])}** "
                             f"people tagged with a skill_category -- n8n automation has run")
@@ -161,15 +172,28 @@ def page_task1(conn):
 def page_task2(conn):
     st.title("Task 2 — n8n skill-tagging automation")
 
-    api_ok, api_info = check_api_health()
-    if api_ok:
-        st.success(f"Supporting API is running at {API_BASE}")
-    else:
-        st.warning(
-            f"Supporting API is not reachable at {API_BASE}. Start it with:\n\n"
-            f"`python3 automation/api_server.py`"
-        )
-    st.json(api_info if isinstance(api_info, dict) else {"error": api_info})
+    col1, col2 = st.columns(2)
+    with col1:
+        api_ok, api_info = check_api_health()
+        if api_ok:
+            st.success(f"Supporting API is running at {API_BASE}")
+        else:
+            st.warning(
+                f"Supporting API is not reachable at {API_BASE}. Start it with:\n\n"
+                f"`python3 automation/api_server.py`"
+            )
+        st.json(api_info if isinstance(api_info, dict) else {"error": api_info})
+    with col2:
+        if check_n8n_reachable():
+            st.success(f"n8n editor is running at {N8N_BASE}")
+            st.link_button("Open n8n editor →", N8N_BASE)
+        else:
+            st.warning(
+                f"n8n isn't reachable at {N8N_BASE}. Start it (see "
+                f"[automation/README.md](../automation/README.md) for the "
+                f"exact `npx n8n start` steps, including a fix if your "
+                f"system Node is too new)."
+            )
 
     st.markdown(
         "**To run the actual automation:** this step has to happen in the "
